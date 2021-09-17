@@ -51,7 +51,7 @@
 #include <linux/slab.h>
 #include <linux/file.h>
 #include <linux/sizes.h>
-
+#include <linux/rtmutex.h>
 
 #include "mali_kbase_fence_defs.h"
 
@@ -336,7 +336,7 @@ struct kbase_fault {
  *                        serialized by the @mmu_lock.
  */
 struct kbase_mmu_table {
-	struct mutex mmu_lock;
+	struct rt_mutex mmu_lock;
 	phys_addr_t pgd;
 	u8 group_id;
 	struct kbase_context *kctx;

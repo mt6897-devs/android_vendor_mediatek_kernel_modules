@@ -218,14 +218,14 @@ static void mmu_flush_invalidate_as(struct kbase_device *kbdev, struct kbase_as 
 	unsigned long flags;
 
 	/* AS transaction begin */
-	mutex_lock(&kbdev->mmu_hw_mutex);
+	rt_mutex_lock(&kbdev->mmu_hw_mutex);
 	spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
 
 	if (kbdev->pm.backend.gpu_ready && (kbase_mmu_hw_do_flush_locked(kbdev, as, op_param)))
 		dev_err(kbdev->dev, "Flush for GPU page table update did not complete");
 
 	spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
-	mutex_unlock(&kbdev->mmu_hw_mutex);
+	rt_mutex_unlock(&kbdev->mmu_hw_mutex);
 	/* AS transaction end */
 }
 
@@ -265,9 +265,9 @@ static void mmu_flush_invalidate(struct kbase_device *kbdev, struct kbase_contex
 		mmu_flush_invalidate_as(kbdev, &kbdev->as[as_nr], op_param);
 	} else {
 #if !MALI_USE_CSF
-		mutex_lock(&kbdev->js_data.queue_mutex);
+		rt_mutex_lock(&kbdev->js_data.queue_mutex);
 		ctx_is_in_runpool = kbase_ctx_sched_inc_refcount(kctx);
-		mutex_unlock(&kbdev->js_data.queue_mutex);
+		rt_mutex_unlock(&kbdev->js_data.queue_mutex);
 #else
 		ctx_is_in_runpool = kbase_ctx_sched_inc_refcount_if_as_valid(kctx);
 #endif /* !MALI_USE_CSF */
@@ -300,7 +300,7 @@ static void mmu_flush_invalidate_on_gpu_ctrl(struct kbase_device *kbdev, struct 
 	unsigned long flags;
 
 	/* AS transaction begin */
-	mutex_lock(&kbdev->mmu_hw_mutex);
+	rt_mutex_lock(&kbdev->mmu_hw_mutex);
 	spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
 
 	if (kbdev->pm.backend.gpu_ready && (!kctx || kctx->as_nr >= 0)) {
@@ -315,7 +315,7 @@ static void mmu_flush_invalidate_on_gpu_ctrl(struct kbase_device *kbdev, struct 
 	}
 
 	spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
-	mutex_unlock(&kbdev->mmu_hw_mutex);
+	rt_mutex_unlock(&kbdev->mmu_hw_mutex);
 }
 
 static void kbase_mmu_sync_pgd_gpu(struct kbase_device *kbdev, struct kbase_context *kctx,
@@ -1282,7 +1282,7 @@ page_fault_retry:
 				fault->addr);
 		}
 
-		mutex_unlock(&kbdev->mmu_hw_mutex);
+		rt_mutex_unlock(&kbdev->mmu_hw_mutex);
 
 		kbase_mmu_hw_enable_fault(kbdev, faulting_as,
 				KBASE_MMU_FAULT_TYPE_PAGE);
@@ -2009,10 +2009,10 @@ static int mmu_insert_alloc_pgds(struct kbase_device *kbdev, struct kbase_mmu_ta
 			if (new_pgds[i] != KBASE_MMU_INVALID_PGD_ADDRESS)
 				break;
 
-			mutex_unlock(&mmut->mmu_lock);
+			rt_mutex_unlock(&mmut->mmu_lock);
 			err = kbase_mem_pool_grow(&kbdev->mem_pools.small[mmut->group_id],
 						  level_high, NULL);
-			mutex_lock(&mmut->mmu_lock);
+			rt_mutex_lock(&mmut->mmu_lock);
 			if (err) {
 				dev_err(kbdev->dev, "%s: kbase_mem_pool_grow() returned error %d",
 					__func__, err);
@@ -2078,7 +2078,7 @@ static int kbase_mmu_insert_single_page(struct kbase_context *kctx, u64 start_vp
 		}
 	}
 
-	mutex_lock(&mmut->mmu_lock);
+	rt_mutex_lock(&mmut->mmu_lock);
 
 	while (remain) {
 		unsigned int vindex = insert_vpfn & 0x1FF;
@@ -2191,7 +2191,7 @@ static int kbase_mmu_insert_single_page(struct kbase_context *kctx, u64 start_vp
 		kbase_kunmap(p, pgd_page);
 	}
 
-	mutex_unlock(&mmut->mmu_lock);
+	rt_mutex_unlock(&mmut->mmu_lock);
 
 	mmu_flush_invalidate_insert_pages(kbdev, mmut, start_vpfn, nr, dirty_pgds, mmu_sync_info,
 					  false);
@@ -2213,7 +2213,7 @@ fail_unlock:
 	mmu_flush_invalidate_insert_pages(kbdev, mmut, start_vpfn, nr, dirty_pgds, mmu_sync_info,
 					  true);
 	kbase_mmu_free_pgds_list(kbdev, mmut);
-	mutex_unlock(&mmut->mmu_lock);
+	rt_mutex_unlock(&mmut->mmu_lock);
 
 	return err;
 }
@@ -2359,7 +2359,7 @@ static int mmu_insert_pages_no_flush(struct kbase_device *kbdev, struct kbase_mm
 	if (nr == 0)
 		return 0;
 
-	mutex_lock(&mmut->mmu_lock);
+	rt_mutex_lock(&mmut->mmu_lock);
 
 	while (remain) {
 		unsigned int vindex = insert_vpfn & 0x1FF;
@@ -2502,7 +2502,7 @@ static int mmu_insert_pages_no_flush(struct kbase_device *kbdev, struct kbase_mm
 		kbase_kunmap(p, pgd_page);
 	}
 
-	mutex_unlock(&mmut->mmu_lock);
+	rt_mutex_unlock(&mmut->mmu_lock);
 
 	return 0;
 
@@ -2521,7 +2521,7 @@ fail_unlock:
 	mmu_flush_invalidate_insert_pages(kbdev, mmut, start_vpfn, nr,
 					  dirty_pgds ? *dirty_pgds : 0xF, CALLER_MMU_ASYNC, true);
 	kbase_mmu_free_pgds_list(kbdev, mmut);
-	mutex_unlock(&mmut->mmu_lock);
+	rt_mutex_unlock(&mmut->mmu_lock);
 
 	return err;
 }
@@ -3053,7 +3053,7 @@ static int mmu_teardown_pages(struct kbase_device *kbdev, struct kbase_mmu_table
 	    nr_phys_pages <= KBASE_PA_RANGE_THRESHOLD_NR_PAGES)
 		flush_op = KBASE_MMU_OP_FLUSH_PT;
 
-	mutex_lock(&mmut->mmu_lock);
+	rt_mutex_lock(&mmut->mmu_lock);
 
 	err = kbase_mmu_teardown_pgd_pages(kbdev, mmut, vpfn, nr_virt_pages, &dirty_pgds,
 					   &free_pgds_list, flush_op);
@@ -3082,7 +3082,7 @@ static int mmu_teardown_pages(struct kbase_device *kbdev, struct kbase_mmu_table
 	kbase_mmu_free_pgds_list(kbdev, mmut);
 
 #if IS_ENABLED(CONFIG_MALI_MTK_UNHANDLED_PAGE_FAULT_DEBUG)
-	mutex_lock(&kbdev->mmu_debug_info_lock);
+	rt_mutex_lock(&kbdev->mmu_debug_info_lock);
 	time_in_ns = ktime_get_raw_ns() / 1000;
 	mmu_debug_info = (struct kbase_mmu_debug_info) { time_in_ns,
 							 nr_phys_pages,
@@ -3093,10 +3093,10 @@ static int mmu_teardown_pages(struct kbase_device *kbdev, struct kbase_mmu_table
 							 ignore_page_migration };
 	kbdev->mmu_dbg[kbdev->mmu_debug_info_head % MMU_DEBUG_INFO_BUFFER_SIZE] = mmu_debug_info;
 	kbdev->mmu_debug_info_head++;
-	mutex_unlock(&kbdev->mmu_debug_info_lock);
+	rt_mutex_unlock(&kbdev->mmu_debug_info_lock);
 #endif /* CONFIG_MALI_MTK_UNHANDLED_PAGE_FAULT_DEBUG */
 
-	mutex_unlock(&mmut->mmu_lock);
+	rt_mutex_unlock(&mmut->mmu_lock);
 
 	return err;
 }
@@ -3158,7 +3158,7 @@ static int kbase_mmu_update_pages_no_flush(struct kbase_device *kbdev, struct kb
 	if (nr == 0)
 		return 0;
 
-	mutex_lock(&mmut->mmu_lock);
+	rt_mutex_lock(&mmut->mmu_lock);
 
 	while (nr) {
 		unsigned int i;
@@ -3237,11 +3237,11 @@ static int kbase_mmu_update_pages_no_flush(struct kbase_device *kbdev, struct kb
 		kbase_kunmap(p, pgd_page);
 	}
 
-	mutex_unlock(&mmut->mmu_lock);
+	rt_mutex_unlock(&mmut->mmu_lock);
 	return 0;
 
 fail_unlock:
-	mutex_unlock(&mmut->mmu_lock);
+	rt_mutex_unlock(&mmut->mmu_lock);
 	return err;
 }
 
@@ -3422,7 +3422,7 @@ int kbase_mmu_migrate_page(struct tagged_addr old_phys, struct tagged_addr new_p
 					     pgd_level_to_skip_flush(1ULL << level) :
 					     pgd_level_to_skip_flush(3ULL << level);
 
-	mutex_lock(&mmut->mmu_lock);
+	rt_mutex_lock(&mmut->mmu_lock);
 
 	/* The state was evaluated before entering this function, but it could
 	 * have changed before the mmu_lock was taken. However, the state
@@ -3475,7 +3475,7 @@ int kbase_mmu_migrate_page(struct tagged_addr old_phys, struct tagged_addr new_p
 		goto pgd_page_map_error;
 	}
 
-	mutex_lock(&kbdev->mmu_hw_mutex);
+	rt_mutex_lock(&kbdev->mmu_hw_mutex);
 
 	/* Lock MMU region and flush GPU cache by using GPU control,
 	 * in order to keep MMU region locked.
@@ -3484,7 +3484,7 @@ int kbase_mmu_migrate_page(struct tagged_addr old_phys, struct tagged_addr new_p
 	if (unlikely(!kbase_pm_l2_allow_mmu_page_migration(kbdev))) {
 		/* Defer the migration as L2 is in a transitional phase */
 		spin_unlock_irqrestore(&kbdev->hwaccess_lock, hwaccess_flags);
-		mutex_unlock(&kbdev->mmu_hw_mutex);
+		rt_mutex_unlock(&kbdev->mmu_hw_mutex);
 		dev_dbg(kbdev->dev, "%s: L2 in transtion, abort PGD page migration", __func__);
 		ret = -EAGAIN;
 		goto l2_state_defer_out;
@@ -3514,7 +3514,7 @@ int kbase_mmu_migrate_page(struct tagged_addr old_phys, struct tagged_addr new_p
 	spin_unlock_irqrestore(&kbdev->hwaccess_lock, hwaccess_flags);
 
 	if (ret < 0) {
-		mutex_unlock(&kbdev->mmu_hw_mutex);
+		rt_mutex_unlock(&kbdev->mmu_hw_mutex);
 		dev_err(kbdev->dev, "%s: failed to lock MMU region or flush GPU cache", __func__);
 		goto undo_mappings;
 	}
@@ -3605,7 +3605,7 @@ int kbase_mmu_migrate_page(struct tagged_addr old_phys, struct tagged_addr new_p
 	}
 	spin_unlock_irqrestore(&kbdev->hwaccess_lock, hwaccess_flags);
 	/* Releasing locks before checking the migration transaction error state */
-	mutex_unlock(&kbdev->mmu_hw_mutex);
+	rt_mutex_unlock(&kbdev->mmu_hw_mutex);
 
 	spin_lock_irqsave(&kbdev->hwaccess_lock, hwaccess_flags);
 	/* Release the transition prevention in L2 by ending the transaction */
@@ -3642,7 +3642,7 @@ l2_state_defer_out:
 pgd_page_map_error:
 get_pgd_at_level_error:
 page_state_change_out:
-	mutex_unlock(&mmut->mmu_lock);
+	rt_mutex_unlock(&mmut->mmu_lock);
 
 	kbase_kunmap(as_page(new_phys), new_page);
 new_page_map_error:
@@ -3652,7 +3652,7 @@ old_page_map_error:
 
 undo_mappings:
 	/* Unlock the MMU table and undo mappings. */
-	mutex_unlock(&mmut->mmu_lock);
+	rt_mutex_unlock(&mmut->mmu_lock);
 	kbase_kunmap(phys_to_page(pgd), pgd_page);
 	kbase_kunmap(as_page(new_phys), new_page);
 	kbase_kunmap(as_page(old_phys), old_page);
@@ -3743,7 +3743,7 @@ int kbase_mmu_init(struct kbase_device *const kbdev,
 			   "Array of MMU levels is not large enough.");
 
 	mmut->group_id = group_id;
-	mutex_init(&mmut->mmu_lock);
+	rt_mutex_init(&mmut->mmu_lock);
 	mmut->kctx = kctx;
 	mmut->pgd = KBASE_MMU_INVALID_PGD_ADDRESS;
 
@@ -3776,15 +3776,15 @@ void kbase_mmu_term(struct kbase_device *kbdev, struct kbase_mmu_table *mmut)
 	     mmut->kctx->tgid, mmut->kctx->id);
 
 	if (mmut->pgd != KBASE_MMU_INVALID_PGD_ADDRESS) {
-		mutex_lock(&mmut->mmu_lock);
+		rt_mutex_lock(&mmut->mmu_lock);
 		mmu_teardown_level(kbdev, mmut, mmut->pgd, MIDGARD_MMU_TOPLEVEL);
-		mutex_unlock(&mmut->mmu_lock);
+		rt_mutex_unlock(&mmut->mmu_lock);
 
 		if (mmut->kctx)
 			KBASE_TLSTREAM_AUX_PAGESALLOC(kbdev, mmut->kctx->id, 0);
 	}
 
-	mutex_destroy(&mmut->mmu_lock);
+	rt_mutex_destroy(&mmut->mmu_lock);
 }
 
 void kbase_mmu_as_term(struct kbase_device *kbdev, unsigned int i)
@@ -3892,7 +3892,7 @@ void *kbase_mmu_dump(struct kbase_context *kctx, int nr_pages)
 		return NULL;
 	kaddr = vmalloc_user(size_left);
 
-	mutex_lock(&kctx->mmu.mmu_lock);
+	rt_mutex_lock(&kctx->mmu.mmu_lock);
 
 	if (kaddr) {
 		u64 end_marker = 0xFFULL;
@@ -3940,12 +3940,12 @@ void *kbase_mmu_dump(struct kbase_context *kctx, int nr_pages)
 		memcpy(mmu_dump_buffer, &end_marker, sizeof(u64));
 	}
 
-	mutex_unlock(&kctx->mmu.mmu_lock);
+	rt_mutex_unlock(&kctx->mmu.mmu_lock);
 	return kaddr;
 
 fail_free:
 	vfree(kaddr);
-	mutex_unlock(&kctx->mmu.mmu_lock);
+	rt_mutex_unlock(&kctx->mmu.mmu_lock);
 	return NULL;
 }
 KBASE_EXPORT_TEST_API(kbase_mmu_dump);
