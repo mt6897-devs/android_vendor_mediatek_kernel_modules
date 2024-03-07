@@ -8341,7 +8341,7 @@ static int initWlan(void)
 #if (CFG_CHIP_RESET_SUPPORT)
 	glResetInit(prGlueInfo);
 #endif
-	kalFbNotifierReg(prGlueInfo);
+	kalNotifierReg(prGlueInfo);
 
 #if CFG_MODIFY_TX_POWER_BY_BAT_VOLT
 	kalBatNotifierReg(prGlueInfo);
@@ -8447,7 +8447,7 @@ static void exitWlan(void)
 	mddpUninit();
 #endif
 
-	kalFbNotifierUnReg();
+	kalNotifierUnReg();
 
 #if CFG_MODIFY_TX_POWER_BY_BAT_VOLT
 	kalBatNotifierUnReg();
@@ -8603,7 +8603,7 @@ static int wf_pdwnc_notify(struct notifier_block *nb,
 		mddpUninit();
 #endif
 		wlanUnregisterNetdevNotifier();
-		kalFbNotifierUnReg();
+		kalNotifierUnReg();
 
 #if CFG_MODIFY_TX_POWER_BY_BAT_VOLT
 		kalBatNotifierUnReg();
