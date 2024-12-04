@@ -4563,7 +4563,7 @@ void mldCheckStarecList(struct ADAPTER *prAdapter)
 	uint8_t ucCount;
 	uint8_t fgError;
 
-	DBGLOG(SW4, INFO, "mldCheckStarecList");
+	DBGLOG(SW4, TRACE, "mldCheckStarecList");
 
 	for (i = 0; i < ARRAY_SIZE(prAdapter->aprMldStarec); i++) {
 		ucCount = 0;

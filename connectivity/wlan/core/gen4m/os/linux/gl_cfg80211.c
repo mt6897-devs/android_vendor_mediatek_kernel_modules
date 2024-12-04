@@ -180,6 +180,8 @@ mtk_cfg80211_add_key(struct wiphy *wiphy,
 	struct PARAM_KEY rDupKey;
 	struct BSS_INFO *prBssInfo;
 #endif
+	uint8_t aucLogBuf[512];
+	int32_t i4Written = 0;
 
 	WIPHY_PRIV(wiphy, prGlueInfo);
 	ASSERT(prGlueInfo);
@@ -188,17 +190,20 @@ mtk_cfg80211_add_key(struct wiphy *wiphy,
 	if (!IS_BSS_INDEX_VALID(ucBssIndex))
 		return -EINVAL;
 
+	kalMemZero(aucLogBuf, sizeof(aucLogBuf));
 #if 1
 	if (mac_addr) {
-		DBGLOG(RSN, INFO,
-		       "keyIdx = %d pairwise = %d mac = " MACSTR "\n",
-		       key_index, pairwise, MAC2STR(mac_addr));
+		i4Written += kalSnprintf(aucLogBuf + i4Written,
+			sizeof(aucLogBuf) - i4Written,
+			"keyIdx = %d pairwise = %d cipher = %x mac = " MACSTR,
+			key_index, pairwise, params->cipher, MAC2STR(mac_addr));
 	} else {
-		DBGLOG(RSN, INFO, "keyIdx = %d pairwise = %d null mac\n",
-		       key_index, pairwise);
+		i4Written += kalSnprintf(aucLogBuf + i4Written,
+			sizeof(aucLogBuf) - i4Written,
+			"keyIdx = %d pairwise = %d cipher = %x null mac",
+			key_index, pairwise, params->cipher);
 	}
-	DBGLOG(RSN, INFO, "Cipher = %x\n", params->cipher);
-	DBGLOG_MEM8(RSN, INFO, params->key, params->key_len);
+	DBGLOG_MEM8(RSN, LOUD, params->key, params->key_len);
 #endif
 
 	kalMemZero(&rKey, sizeof(struct PARAM_KEY));
@@ -243,7 +248,7 @@ mtk_cfg80211_add_key(struct wiphy *wiphy,
 			rKey.ucCipher = CIPHER_SUITE_GCMP_256;
 			break;
 		case WLAN_CIPHER_SUITE_BIP_GMAC_256:
-			DBGLOG(RSN, INFO,
+			DBGLOG(RSN, TRACE,
 				"[BIP-GMAC-256] save IGTK and handle integrity check ...\n");
 			rKey.ucCipher = CIPHER_SUITE_BIP_GMAC_256;
 			break;
@@ -282,12 +287,15 @@ mtk_cfg80211_add_key(struct wiphy *wiphy,
 	rKey.u4Length = OFFSET_OF(struct PARAM_KEY, aucKeyMaterial)
 				+ rKey.u4KeyLength;
 
-	if (params->seq_len) {
-		DBGLOG(RSN, INFO, "Dump IPN if given\n");
+	if (params->seq_len && key_index >= 4) {
+		i4Written += kalSnprintf(aucLogBuf + i4Written,
+			sizeof(aucLogBuf) - i4Written,
+			 " , dump IPN for keyID >= 3");
 		DBGLOG_MEM8(RSN, INFO, params->seq, params->seq_len);
 		if (params->seq_len == 6) /* IGTK Package Number */
 			kalMemCopy(rKey.aucKeyPn, params->seq, params->seq_len);
 	}
+	DBGLOG(RSN, INFO, "%s", aucLogBuf);
 
 #if CFG_SUPPORT_DUAL_WTBL_GTK_REKEY_OFFLOAD
 	 prBssInfo = GET_BSS_INFO_BY_INDEX(prGlueInfo->prAdapter,
@@ -1510,6 +1518,8 @@ int mtk_cfg80211_connect(struct wiphy *wiphy,
 	struct HS20_INFO *prHS20Info;
 #endif
 	uint8_t ucBssIndex = 0;
+	uint8_t aucLogBuf[512];
+	int32_t i4Written = 0;
 
 	WIPHY_PRIV(wiphy, prGlueInfo);
 	ASSERT(prGlueInfo);
@@ -1518,9 +1528,13 @@ int mtk_cfg80211_connect(struct wiphy *wiphy,
 	if (!IS_BSS_INDEX_AIS(prGlueInfo->prAdapter, ucBssIndex))
 		return -EINVAL;
 
-	DBGLOG(REQ, INFO,
-	       "[wlan] mtk_cfg80211_connect %p %zu auth_type=%d flags=0x%x\n",
-	       sme->ie, sme->ie_len, sme->auth_type, sme->flags);
+	kalMemZero(aucLogBuf, sizeof(aucLogBuf));
+	i4Written += kalSnprintf(aucLogBuf + i4Written,
+		sizeof(aucLogBuf) - i4Written,
+		"[wlan] ie_len=%zu flags=0x%x auth_type=%d wpa_versions=%x",
+		sme->ie_len, sme->flags, sme->auth_type,
+		sme->crypto.wpa_versions);
+
 	prConnSettings = aisGetConnSettings(prGlueInfo->prAdapter, ucBssIndex);
 	/* init to prevent returning status success due to no valid ap. */
 	prConnSettings->u2JoinStatus = WLAN_STATUS_AUTH_TIMEOUT;
@@ -1564,10 +1578,6 @@ int mtk_cfg80211_connect(struct wiphy *wiphy,
 		prWpaInfo->u4WpaVersion = IW_AUTH_WPA_VERSION_WPA2;
 	else
 		prWpaInfo->u4WpaVersion = IW_AUTH_WPA_VERSION_DISABLED;
-
-	DBGLOG(REQ, INFO,
-	       "sme->auth_type=%x, sme->crypto.wpa_versions=%x",
-		sme->auth_type,	sme->crypto.wpa_versions);
 
 	switch (sme->auth_type) {
 	case NL80211_AUTHTYPE_OPEN_SYSTEM:
@@ -1613,7 +1623,9 @@ int mtk_cfg80211_connect(struct wiphy *wiphy,
 	}
 
 	if (sme->crypto.n_akm_suites) {
-		DBGLOG(REQ, INFO, "n_akm_suites=%x, akm_suites=%x",
+		i4Written += kalSnprintf(aucLogBuf + i4Written,
+			sizeof(aucLogBuf) - i4Written,
+			" n_akm_suites=%x, akm_suites=%x",
 			sme->crypto.n_akm_suites,
 			sme->crypto.akm_suites[0]);
 		if (wlanParseAkmSuites(sme->crypto.akm_suites,
@@ -1624,8 +1636,10 @@ int mtk_cfg80211_connect(struct wiphy *wiphy,
 	}
 
 	if (sme->crypto.n_ciphers_pairwise) {
-		DBGLOG(RSN, INFO, "cipher pairwise (0x%x)\n",
-		       sme->crypto.ciphers_pairwise[0]);
+		i4Written += kalSnprintf(aucLogBuf + i4Written,
+			sizeof(aucLogBuf) - i4Written,
+			" ciphers_pairwise=0x%x",
+			sme->crypto.ciphers_pairwise[0]);
 		prMib->dot11RSNAConfigPairwiseCipher =
 			SWAP32(sme->crypto.ciphers_pairwise[0]);
 		switch (sme->crypto.ciphers_pairwise[0]) {
@@ -1673,7 +1687,9 @@ int mtk_cfg80211_connect(struct wiphy *wiphy,
 	}
 
 	if (sme->crypto.cipher_group) {
-		DBGLOG(RSN, INFO, "cipher group (0x%x)\n",
+		i4Written += kalSnprintf(aucLogBuf + i4Written,
+			sizeof(aucLogBuf) - i4Written,
+			" cipher_group=0x%x",
 		       sme->crypto.cipher_group);
 		prMib->dot11RSNAConfigGroupCipher =
 			SWAP32(sme->crypto.cipher_group);
@@ -1720,8 +1736,13 @@ int mtk_cfg80211_connect(struct wiphy *wiphy,
 		}
 	}
 
-	DBGLOG(REQ, INFO,
-		"u4WpaVersion=%d, u4AuthAlg=%d, eAuthMode=%d, u4AkmSuite=0x%x, u4CipherGroup=0x%x, u4CipherPairwise=0x%x\n",
+	DBGLOG(REQ, INFO, "%s", aucLogBuf);
+
+	kalMemZero(aucLogBuf, sizeof(aucLogBuf));
+	i4Written = 0;
+	i4Written += kalSnprintf(aucLogBuf + i4Written,
+		sizeof(aucLogBuf) - i4Written,
+		"WpaVersion=%d, AuthAlg=%d, AuthMode=%d,AKM=0x%x, GTK=0x%x, PTK=0x%x",
 		prWpaInfo->u4WpaVersion, prWpaInfo->u4AuthAlg,
 		eAuthMode, u4AkmSuite, prWpaInfo->u4CipherGroup,
 		prWpaInfo->u4CipherPairwise);
@@ -1769,8 +1790,9 @@ int mtk_cfg80211_connect(struct wiphy *wiphy,
 			    (struct RSN_INFO_ELEM *)prDesiredIE, &rRsnInfo)) {
 				prWpaInfo->u4CipherGroupMgmt =
 					rRsnInfo.u4GroupMgmtCipherSuite;
-				DBGLOG(RSN, INFO,
-					"RSN: group mgmt cipher suite 0x%x\n",
+				i4Written += kalSnprintf(aucLogBuf + i4Written,
+					sizeof(aucLogBuf) - i4Written,
+					" IGTK=0x%x",
 					prWpaInfo->u4CipherGroupMgmt);
 #if CFG_SUPPORT_802_11W
 				if (rRsnInfo.u2RsnCap & ELEM_WPA_CAP_MFPC) {
@@ -1797,13 +1819,16 @@ int mtk_cfg80211_connect(struct wiphy *wiphy,
 				prWpaInfo->u2RSNXCap = rRsnxeInfo.u2Cap;
 				if (prWpaInfo->u2RSNXCap &
 					BIT(WLAN_RSNX_CAPAB_SAE_H2E)) {
-					DBGLOG(RSN, INFO,
-						"SAE-H2E is supported, RSNX ie: 0x%x\n",
+					i4Written += kalSnprintf(
+						aucLogBuf + i4Written,
+						sizeof(aucLogBuf) - i4Written,
+						" SAE-H2E is supported, RSNX ie: 0x%x",
 						prWpaInfo->u2RSNXCap);
 				}
 			}
 		}
 	}
+	DBGLOG(REQ, INFO, "%s", aucLogBuf);
 
 	/* Fill WPA info - mfp setting */
 	/* Must put after paring RSNE from upper layer

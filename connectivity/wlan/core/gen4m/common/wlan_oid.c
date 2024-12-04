@@ -2685,16 +2685,9 @@ wlanSetAddKeyImpl(struct ADAPTER *prAdapter, void *pvSetBuffer,
 						prCmdKey->ucWlanIndex;
 					prBssInfo->ucBMCWlanIndexSUsed[
 						prCmdKey->ucKeyId] = TRUE;
-					DBGLOG_LIMITED(RSN, INFO,
-					       "BMCWlanIndex kid = %d, index = %d\n",
-					       prCmdKey->ucKeyId,
-					       prCmdKey->ucWlanIndex);
 #endif
 				}
 			}
-
-			DBGLOG_LIMITED(RSN, INFO, "BIP BC wtbl index:%d\n",
-				prCmdKey->ucWlanIndex);
 		} else
 #endif
 		if (1) {
@@ -2785,10 +2778,6 @@ wlanSetAddKeyImpl(struct ADAPTER *prAdapter, void *pvSetBuffer,
 						prCmdKey->ucWlanIndex;
 					prBssInfo->ucBMCWlanIndexSUsed[
 						prCmdKey->ucKeyId] = TRUE;
-					DBGLOG_LIMITED(RSN, INFO,
-					       "BMCWlanIndex kid = %d, index = %d\n",
-					       prCmdKey->ucKeyId,
-					       prCmdKey->ucWlanIndex);
 				}
 				if (prCmdKey->ucTxKey) { /* */
 					prBssInfo->fgBcDefaultKeyExist = TRUE;
@@ -2799,25 +2788,23 @@ wlanSetAddKeyImpl(struct ADAPTER *prAdapter, void *pvSetBuffer,
 		}
 	}
 #if 1
-	DBGLOG(RSN, INFO, "Add key to wlanIdx %d,BSS=%d," MACSTR
-		       "Tx=%d,type=%d,Auth=%d,cipher=%d,keyid=%d,keylen=%d\n",
+	DBGLOG(RSN, INFO, "Add key to wlanIdx %d,BSS=%d, " MACSTR
+		       " Tx=%d,type=%d,Auth=%d,cipher=%d,keyid=%d,keylen=%d\n",
 		       prCmdKey->ucWlanIndex, prCmdKey->ucBssIdx,
 		       MAC2STR(prCmdKey->aucPeerAddr), prCmdKey->ucTxKey,
 		       prCmdKey->ucKeyType, prCmdKey->ucIsAuthenticator,
 		       prCmdKey->ucAlgorithmId, prCmdKey->ucKeyId,
 		       prCmdKey->ucKeyLen);
-	DBGLOG_MEM8(RSN, TRACE, prCmdKey->aucKeyMaterial, prCmdKey->ucKeyLen);
 	if (prCmdKey->ucKeyId < MAX_KEY_NUM) {
-		DBGLOG_LIMITED(RSN, INFO, "wepkeyUsed=%d,wepkeyWlanIdx=%d\n",
-		       prBssInfo->wepkeyUsed[prCmdKey->ucKeyId],
-		       prBssInfo->wepkeyWlanIdx);
-
-		DBGLOG(RSN, INFO,
-		       "ucBMCWlanIndexSUsed=%d,ucBMCWlanIndexS=%d,ucBcnProtInstalled=%d\n",
-		       prBssInfo->ucBMCWlanIndexSUsed[prCmdKey->ucKeyId],
-		       prBssInfo->ucBMCWlanIndexS[prCmdKey->ucKeyId],
-		       prBssInfo->ucBcnProtInstalled[prCmdKey->ucKeyId]);
+		DBGLOG_LIMITED(RSN, INFO,
+			"wepkeyUsed=%d,wepkeyWlanIdx=%d,ucBMCWlanIndexSUsed=%d,ucBMCWlanIndexS=%d,ucBcnProtInstalled=%d\n",
+			prBssInfo->wepkeyUsed[prCmdKey->ucKeyId],
+			prBssInfo->wepkeyWlanIdx,
+			prBssInfo->ucBMCWlanIndexSUsed[prCmdKey->ucKeyId],
+			prBssInfo->ucBMCWlanIndexS[prCmdKey->ucKeyId],
+			prBssInfo->ucBcnProtInstalled[prCmdKey->ucKeyId]);
 	}
+	DBGLOG_MEM8(RSN, TRACE, prCmdKey->aucKeyMaterial, prCmdKey->ucKeyLen);
 #endif
 	if (prAisSpecBssInfo)
 		prAisSpecBssInfo->ucKeyAlgorithmId = prCmdKey->ucAlgorithmId;

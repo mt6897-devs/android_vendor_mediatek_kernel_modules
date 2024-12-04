@@ -1026,14 +1026,22 @@ void rsnDumpSupportedAKMSuite(struct ADAPTER *prAdapter, uint8_t ucBssIndex)
 	uint8_t i;
 	struct DOT11_RSNA_CONFIG_AUTHENTICATION_SUITES_ENTRY *prEntry;
 	struct IEEE_802_11_MIB *prMib;
+	uint8_t aucLogBuf[512];
+	int32_t i4Written = 0;
 
 	prMib = aisGetMib(prAdapter, ucBssIndex);
+	kalMemZero(aucLogBuf, sizeof(aucLogBuf));
+	i4Written += kalSnprintf(aucLogBuf + i4Written,
+		sizeof(aucLogBuf) - i4Written,
+		"Support akm list: ");
 
 	for (i = 0; i < MAX_NUM_SUPPORTED_AKM_SUITES; i++) {
 		prEntry = &prMib->dot11RSNAConfigAuthenticationSuitesTable[i];
 		if (prEntry->dot11RSNAConfigAuthenticationSuiteEnabled)
-			DBGLOG(RSN, WARN, "Support akm=0x%x\n",
-			   SWAP32(prEntry->dot11RSNAConfigAuthenticationSuite));
+			i4Written += kalSnprintf(aucLogBuf + i4Written,
+			sizeof(aucLogBuf) - i4Written,
+			"0x%x ",
+			SWAP32(prEntry->dot11RSNAConfigAuthenticationSuite));
 #if 0
 		else
 			DBGLOG(RSN, WARN, "Unsupport akm=0x%x\n",
@@ -1041,7 +1049,11 @@ void rsnDumpSupportedAKMSuite(struct ADAPTER *prAdapter, uint8_t ucBssIndex)
 #endif
 	}
 
-	DBGLOG(RSN, WARN, "Support akm bmap=0x%x\n", prMib->dot11RSNAConfigAkm);
+	i4Written += kalSnprintf(aucLogBuf + i4Written,
+				sizeof(aucLogBuf) - i4Written,
+				", Support akm bmap=0x%x\n",
+				prMib->dot11RSNAConfigAkm);
+	DBGLOG(RSN, INFO, "%s", aucLogBuf);
 }
 
 uint8_t rsnSearchFTSuite(struct ADAPTER *ad, uint8_t bssidx)

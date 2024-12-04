@@ -10399,7 +10399,7 @@ uint32_t rlmDomain6GPwrModeUpdate(
 		rlmDomainSendPwrLimitCmd(prAdapter);
 	}
 
-	DBGLOG(RLM, INFO, "Update BSS[%d]6GPwrMode[%d]Curr[%d]Final[%d]",
+	DBGLOG(RLM, TRACE, "Update BSS[%d]6GPwrMode[%d]Curr[%d]Final[%d]",
 			ucBssIndex,
 			e6GPwrModeBss,
 			e6GPwrModeCurr,
