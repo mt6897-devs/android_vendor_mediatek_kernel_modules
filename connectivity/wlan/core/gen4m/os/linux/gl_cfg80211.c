@@ -45,6 +45,8 @@ extern const struct net_device_ops wlan_netdev_ops;
 #define KEY_BUF_SIZE	1024
 #endif
 
+#define IW_AUTH_WPA_VERSION_WPA3        0x00000008
+
 /*******************************************************************************
  *                             D A T A   T Y P E S
  *******************************************************************************
@@ -1378,7 +1380,8 @@ int wlanParseAkmSuites(uint32_t *au4AkmSuites, uint32_t u4AkmSuitesCount,
 				       au4AkmSuites[i]);
 				return -EINVAL;
 			}
-		} else if (u4WpaVersion == IW_AUTH_WPA_VERSION_WPA2) {
+		} else if (u4WpaVersion == IW_AUTH_WPA_VERSION_WPA2 ||
+			   u4WpaVersion == IW_AUTH_WPA_VERSION_WPA3) {
 			switch (au4AkmSuites[i]) {
 			case WLAN_AKM_SUITE_8021X:
 				u4AkmSuite = RSN_AKM_SUITE_802_1X;
@@ -1562,6 +1565,8 @@ int mtk_cfg80211_connect(struct wiphy *wiphy,
 		prWpaInfo->u4WpaVersion = IW_AUTH_WPA_VERSION_WPA;
 	else if (sme->crypto.wpa_versions & NL80211_WPA_VERSION_2)
 		prWpaInfo->u4WpaVersion = IW_AUTH_WPA_VERSION_WPA2;
+	else if (sme->crypto.wpa_versions & NL80211_WPA_VERSION_3)
+		prWpaInfo->u4WpaVersion = IW_AUTH_WPA_VERSION_WPA3;
 	else
 		prWpaInfo->u4WpaVersion = IW_AUTH_WPA_VERSION_DISABLED;
 
@@ -2441,7 +2446,9 @@ int mtk_cfg80211_set_rekey_data(struct wiphy *wiphy,
 		ucBssIndex);
 
 	prGtkData->u4Proto = NL80211_WPA_VERSION_2;
-	if (prWpaInfo->u4WpaVersion == IW_AUTH_WPA_VERSION_WPA)
+	if (prWpaInfo->u4WpaVersion == IW_AUTH_WPA_VERSION_WPA3)
+		prGtkData->u4Proto = NL80211_WPA_VERSION_3;
+	else if (prWpaInfo->u4WpaVersion == IW_AUTH_WPA_VERSION_WPA)
 		prGtkData->u4Proto = NL80211_WPA_VERSION_1;
 
 	if (GET_SELECTOR_TYPE(prBssInfo->u4RsnSelectedPairwiseCipher) ==
