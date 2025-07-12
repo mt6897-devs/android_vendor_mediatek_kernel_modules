@@ -90,9 +90,11 @@ void ccd_master_destroy(struct mtk_ccd *ccd,
 {
 	int id;
 	struct rpmsg_endpoint *ept;
+	struct rpmsg_endpoint *ept_to_release[CCD_IPI_MAX] = { NULL };
 	struct mtk_rpmsg_device *srcmdev;
 	struct mtk_rpmsg_rproc_subdev *mtk_subdev =
 		to_mtk_subdev(ccd->rpmsg_subdev);
+	int release_cnt = 0;
 
 	dev_info(&mtk_subdev->pdev->dev, "%s, master_obj: %d\n",
 		 __func__, master_obj->state);
@@ -120,16 +122,21 @@ void ccd_master_destroy(struct mtk_ccd *ccd,
 
 			mutex_unlock(&ept->cb_lock);
 
-			/* farewell, ept, we don't need you anymore */
-			kref_put(&ept->refcount, __ept_release);
-			rpmsg_destroy_ept(ept);
-
+			ept_to_release[release_cnt] = ept;
+			release_cnt++;
 		} else {
 			dev_dbg(&mtk_subdev->pdev->dev,
 				"msg received with no recipient\n");
 		}
 	}
 	mutex_unlock(&mtk_subdev->endpoints_lock);
+
+	for (int i = 0; i < release_cnt; i++) {
+		/* farewell, ept, we don't need you anymore */
+		kref_put(&ept_to_release[i]->refcount, __ept_release);
+		rpmsg_destroy_ept(ept_to_release[i]);
+		ept_to_release[i] = NULL;
+	}
 }
 EXPORT_SYMBOL_GPL(ccd_master_destroy);
 
@@ -179,7 +186,7 @@ int ccd_worker_read(struct mtk_ccd *ccd,
 	int ret;
 	struct mtk_ccd_params *ccd_params;
 	struct mtk_rpmsg_device *srcmdev;
-	struct mtk_ccd_rpmsg_endpoint *mept;
+	struct mtk_ccd_rpmsg_endpoint *mept = NULL;
 	struct mtk_rpmsg_rproc_subdev *mtk_subdev =
 		to_mtk_subdev(ccd->rpmsg_subdev);
 
@@ -205,6 +212,17 @@ int ccd_worker_read(struct mtk_ccd *ccd,
 	}
 	kref_get(&srcmdev->rpdev.ept->refcount);
 	mutex_unlock(&mtk_subdev->endpoints_lock);
+
+	ret = wait_on_bit_timeout(
+		&mtk_subdev->mept_flags[srcmdev->ipi_id],
+		MEPT_PENDING,
+		TASK_UNINTERRUPTIBLE,
+		 msecs_to_jiffies(200));
+	/* performance issue if timeout, try to check the system loading */
+	if (ret != 0)
+		dev_info_ratelimited(ccd->dev,
+				"%s: ipi_id %u timeout, access mempt directly...\n",
+			 __func__, srcmdev->ipi_id);
 
 	mept = to_mtk_rpmsg_endpoint(srcmdev->rpdev.ept);
 

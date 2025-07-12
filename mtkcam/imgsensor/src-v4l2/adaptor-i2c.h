@@ -4,6 +4,12 @@
 #ifndef __ADAPTOR_I2C_H__
 #define __ADAPTOR_I2C_H__
 
+int adaptor_i2c_rd_u8_8bit(struct i2c_client *i2c_client,
+		u16 addr, u8 reg, u8 *val);
+
+int adaptor_i2c_wr_u8_8bit(struct i2c_client *i2c_client,
+		u16 addr, u8 reg, u8 val);
+
 int adaptor_i2c_rd_u8(struct i2c_client *i2c_client,
 		u16 addr, u16 reg, u8 *val);
 

@@ -50,7 +50,7 @@ void check_current_scenario_id_bound(struct subdrv_ctx *ctx);
 void i2c_table_write(struct subdrv_ctx *ctx, u16 *list, u32 len);
 void commit_i2c_buffer(struct subdrv_ctx *ctx);
 void set_i2c_buffer(struct subdrv_ctx *ctx, u16 reg, u16 val);
-u16 i2c_read_eeprom(struct subdrv_ctx *ctx, u16 addr);
+u16 i2c_multi_read_eeprom(struct subdrv_ctx *ctx, u16 addr, u16 size, u8 *pbuf);
 void get_pdaf_reg_setting(struct subdrv_ctx *ctx, u32 regNum, u16 *regDa);
 void set_pdaf_reg_setting(struct subdrv_ctx *ctx, u32 regNum, u16 *regDa);
 void set_mirror_flip(struct subdrv_ctx *ctx, u8 image_mirror);
@@ -167,7 +167,10 @@ void get_multi_exp_shutter_range_by_scenario(struct subdrv_ctx *ctx,
 		enum SENSOR_SCENARIO_ID_ENUM scenario_id,
 		u64 *exp_cnt, void *data);
 void get_sensor_frame_count(struct subdrv_ctx *ctx, u32 *frame_cnt);
+void get_dcg_ratio_group_by_scenario(struct subdrv_ctx *ctx,
+		enum SENSOR_SCENARIO_ID_ENUM scenario_id, void *data);
 
+int common_get_vendor_id(struct subdrv_ctx *ctx, u8 *vendor_id);
 int common_get_imgsensor_id(struct subdrv_ctx *ctx, u32 *sensor_id);
 void subdrv_ctx_init(struct subdrv_ctx *ctx);
 void sensor_init(struct subdrv_ctx *ctx);

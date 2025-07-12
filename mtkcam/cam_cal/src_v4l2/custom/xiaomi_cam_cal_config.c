@@ -302,7 +302,8 @@ unsigned int xiaomi_do_single_lsc(struct EEPROM_DRV_FD_DATA *pdata,
 	if (table_size > 0) {
 		pCamCalData->SingleLsc.TableRotation = 0;
 #ifdef __XIAOMI_CAMERA__
-        if ((0x5664 == pCamCalData->sensorID) || (0xEB52 == pCamCalData->sensorID))
+        if ((0x5664 == pCamCalData->sensorID) || (0xEB52 == pCamCalData->sensorID) ||
+			(0x5650 == pCamCalData->sensorID) || (0x0D42 == pCamCalData->sensorID))
 		pCamCalData->SingleLsc.TableRotation = 1;
 #endif
 		CAM_CAL_LOG_DBG("u4Offset=%d u4Length=%d", start_addr, table_size);
@@ -356,11 +357,14 @@ unsigned int xiaomi_do_pdaf(struct EEPROM_DRV_FD_DATA *pdata,
     (void) block_size;
 
 #ifdef __XIAOMI_CAMERA__
-	if (0x0800 == pCamCalData->sensorID) {
+	if (0x8202 == pCamCalData->sensorID ) {
+		CAM_CAL_LOG_DBG("xiamomi_camera-sensorid");
+
+		//read Partial PDAF OTP
 		read_data_size = read_data(pdata, pCamCalData->sensorID, pCamCalData->deviceID,
-						start_addr, 976, (unsigned char *)&pCamCalData->PDAF.Data[0]);
+						start_addr, 496, (unsigned char *)&pCamCalData->PDAF.Data[0]);
 		if (read_data_size > 0) {
-			pCamCalData->PDAF.Size_of_PDAF = 976;
+			pCamCalData->PDAF.Size_of_PDAF = 496;
 			err = CAM_CAL_ERR_NO_ERR;
 		}
 		else {
@@ -370,12 +374,21 @@ unsigned int xiaomi_do_pdaf(struct EEPROM_DRV_FD_DATA *pdata,
 		}
 
 		read_data(pdata, pCamCalData->sensorID, pCamCalData->deviceID,
-						(start_addr + pCamCalData->PDAF.Size_of_PDAF + 2), 1624,
-						(u8 *)&pCamCalData->PDAF.Data[976]);
+						(start_addr + pCamCalData->PDAF.Size_of_PDAF + 2), 1004,
+						(u8 *)&pCamCalData->PDAF.Data[496]);
+		pCamCalData->PDAF.Size_of_PDAF = 1500;
 
-		pCamCalData->PDAF.Size_of_PDAF = 2600;
+		//read HV-bin PDAF OTP
+		read_data_size = read_data(pdata, pCamCalData->sensorID, pCamCalData->deviceID,
+						(start_addr + pCamCalData->PDAF.Size_of_PDAF + 11), 976, (unsigned char *)&pCamCalData->PDAF.Data[1500]);
+		pCamCalData->PDAF.Size_of_PDAF = 2476;
+
+		read_data(pdata, pCamCalData->sensorID, pCamCalData->deviceID,
+						(start_addr + pCamCalData->PDAF.Size_of_PDAF + 13), 1624,
+						(u8 *)&pCamCalData->PDAF.Data[2476]);
+		pCamCalData->PDAF.Size_of_PDAF = 4100;
+
 	} else {
-
 		read_data_size = read_data(pdata, pCamCalData->sensorID, pCamCalData->deviceID,
 						start_addr, 496, (unsigned char *)&pCamCalData->PDAF.Data[0]);
 		if (read_data_size > 0) {
@@ -395,8 +408,16 @@ unsigned int xiaomi_do_pdaf(struct EEPROM_DRV_FD_DATA *pdata,
 		pCamCalData->PDAF.Size_of_PDAF = 1500;
 
 	}
+	if(0x906 == pCamCalData->sensorID){
+		read_data_size = read_data(pdata, pCamCalData->sensorID, pCamCalData->deviceID,
+						(start_addr + pCamCalData->PDAF.Size_of_PDAF + 11), 976, (unsigned char *)&pCamCalData->PDAF.Data[1500]);
+		pCamCalData->PDAF.Size_of_PDAF = 2476;
+		read_data(pdata, pCamCalData->sensorID, pCamCalData->deviceID,
+						(start_addr + pCamCalData->PDAF.Size_of_PDAF + 13), 1624,
+						(u8 *)&pCamCalData->PDAF.Data[2476]);
+		pCamCalData->PDAF.Size_of_PDAF = 4100;
+	}
 #else
-
 	read_data_size = read_data(pdata, pCamCalData->sensorID, pCamCalData->deviceID,
 			start_addr, 496, (unsigned char *)&pCamCalData->PDAF.Data[0]);
 	if (read_data_size > 0) {
@@ -416,12 +437,18 @@ unsigned int xiaomi_do_pdaf(struct EEPROM_DRV_FD_DATA *pdata,
 	pCamCalData->PDAF.Size_of_PDAF = 1500;
 #endif
 	CAM_CAL_LOG_DBG("======================PDAF Data==================\n");
-	CAM_CAL_LOG_DBG("First five %x, %x, %x, %x, %x\n",
+	CAM_CAL_LOG_DBG("Partial OTP First five %x, %x, %x, %x, %x\n",
 		pCamCalData->PDAF.Data[0],
 		pCamCalData->PDAF.Data[1],
 		pCamCalData->PDAF.Data[2],
 		pCamCalData->PDAF.Data[3],
 		pCamCalData->PDAF.Data[4]);
+	CAM_CAL_LOG_DBG("HV-bin OTP First five %x, %x, %x, %x, %x\n",
+		pCamCalData->PDAF.Data[1500],
+		pCamCalData->PDAF.Data[1501],
+		pCamCalData->PDAF.Data[1502],
+		pCamCalData->PDAF.Data[1503],
+		pCamCalData->PDAF.Data[1504]);
 	CAM_CAL_LOG_DBG("RETURN = 0x%x\n", err);
 	CAM_CAL_LOG_DBG("======================PDAF Data==================\n");
 

@@ -16,14 +16,15 @@
 #include "c2ps_sysfs.h"
 
 enum C2PS_NOTIFIER_PUSH_TYPE {
-	C2PS_NOTIFIER_INIT			= 0x00,
-	C2PS_NOTIFIER_UNINIT		= 0x01,
-	C2PS_NOTIFIER_ADD_TASK		= 0x02,
-	C2PS_NOTIFIER_TASK_START	= 0x03,
-	C2PS_NOTIFIER_TASK_END		= 0x04,
-	C2PS_NOTIFIER_SCENE_CHANGE	= 0x05,
+	C2PS_NOTIFIER_INIT          = 0x00,
+	C2PS_NOTIFIER_UNINIT        = 0x01,
+	C2PS_NOTIFIER_ADD_TASK      = 0x02,
+	C2PS_NOTIFIER_TASK_START    = 0x03,
+	C2PS_NOTIFIER_TASK_END      = 0x04,
+	C2PS_NOTIFIER_SCENE_CHANGE  = 0x05,
 	C2PS_NOTIFIER_CAMFPS        = 0x06,
 	C2PS_NOTIFIER_VSYNC         = 0x07,
+	C2PS_NOTIFIER_TASK_SINGLE_SHOT = 0x08,
 };
 
 struct C2PS_NOTIFIER_PUSH_TAG {
@@ -40,6 +41,13 @@ struct C2PS_NOTIFIER_PUSH_TAG {
 	bool is_vip_task;
 	bool is_dynamic_tid;
 	char task_name[MAX_TASK_NAME_SIZE];
+	int overwrite_uclamp_max[MAX_NUMBER_OF_CLUSTERS];
+	int idle_rate_alert;
+	int timeout;
+	int uclamp_max_placeholder1[MAX_NUMBER_OF_CLUSTERS];
+	int uclamp_max_placeholder2[MAX_NUMBER_OF_CLUSTERS];
+	int uclamp_max_placeholder3[MAX_NUMBER_OF_CLUSTERS];
+	bool reset_param;
 	struct list_head queue_list;
 };
 
@@ -51,15 +59,20 @@ static DEFINE_MUTEX(notifier_wq_lock);
 static DECLARE_WAIT_QUEUE_HEAD(notifier_wq_queue);
 static void self_uninit_timer_callback(struct timer_list *t);
 static int picked_wl_table = 0;
+static unsigned int background_monitor_duration = BACKGROUND_MONITOR_DURATION;
+unsigned int c2ps_nr_clusters = 0;
 
 struct timer_list backgroup_info_update_timer;
 struct timer_list self_uninit_timer;
 
 module_param(picked_wl_table, int, 0644);
+module_param(background_monitor_duration, int, 0644);
 
 static void backgroup_info_update_timer_callback(struct timer_list *t)
 {
-	mod_timer(t, jiffies + BACKGROUND_MONITOR_DURATION*HZ / 1000);
+	if (unlikely(background_monitor_duration == 0))
+		background_monitor_duration = BACKGROUND_MONITOR_DURATION;
+	mod_timer(t, jiffies + background_monitor_duration*HZ / 1000);
 	update_cpu_idle_rate();
 }
 
@@ -74,7 +87,7 @@ static void c2ps_notifier_wq_cb_init(void)
 	timer_setup(&self_uninit_timer, self_uninit_timer_callback, 0);
 	add_timer(&self_uninit_timer);
 
-	backgroup_info_update_timer.expires = jiffies + 2*HZ;
+	backgroup_info_update_timer.expires = jiffies;
 	timer_setup(&backgroup_info_update_timer,
 				backgroup_info_update_timer_callback, 0);
 	add_timer(&backgroup_info_update_timer);
@@ -91,12 +104,13 @@ static void c2ps_notifier_wq_cb_uninit(void)
 	set_gear_uclamp_ctrl(0);
 	// disable sugov curr_uclamp feature
 	set_curr_uclamp_ctrl(0);
+	reset_heavyloading_special_setting();
 	c2ps_uclamp_regulator_flush();
 	del_timer_sync(&backgroup_info_update_timer);
 	exit_c2ps_common();
 	del_timer_sync(&self_uninit_timer);
 	set_wl_type_manual(-1);
-	set_rt_aggre_preempt(1);
+	// set_rt_aggre_preempt(1);
 }
 
 static void c2ps_notifier_wq_cb_add_task(
@@ -187,6 +201,33 @@ static void c2ps_notifier_wq_cb_scene_change(int task_id, int scene_mode)
 
 	if (unlikely(monitor_task_scene_change(task_id, scene_mode)))
 		C2PS_LOGE("notify_task_scene_change failed\n");
+}
+
+static void c2ps_notifier_wq_cb_task_single_shot(
+	int *uclamp_max, int idle_rate_alert, int timeout,
+	int *uclamp_max_placeholder1, int *uclamp_max_placeholder2,
+	int *uclamp_max_placeholder3, bool reset_param)
+{
+	struct global_info *g_info = get_glb_info();
+
+	if (!g_info) {
+		C2PS_LOGE("glb_info is null\n");
+		return;
+	}
+
+	if (need_update_single_shot_uclamp_max(uclamp_max))
+		memcpy(g_info->overwrite_uclamp_max, uclamp_max,
+			c2ps_nr_clusters * sizeof(int));
+	if (unlikely(need_update_single_shot_uclamp_max(uclamp_max_placeholder1)))
+		memcpy(g_info->uclamp_max_placeholder1, uclamp_max_placeholder1,
+			c2ps_nr_clusters * sizeof(int));
+	if (unlikely(need_update_single_shot_uclamp_max(uclamp_max_placeholder2)))
+		memcpy(g_info->uclamp_max_placeholder2, uclamp_max_placeholder2,
+			c2ps_nr_clusters * sizeof(int));
+	if (unlikely(need_update_single_shot_uclamp_max(uclamp_max_placeholder3)))
+		memcpy(g_info->uclamp_max_placeholder3, uclamp_max_placeholder3,
+			c2ps_nr_clusters * sizeof(int));
+
 }
 
 static void c2ps_queue_work(struct C2PS_NOTIFIER_PUSH_TAG *vpPush)
@@ -288,6 +329,13 @@ static void c2ps_notifier_wq_cb(void)
 	case C2PS_NOTIFIER_VSYNC:
 		c2ps_notifier_wq_cb_vsync(vpPush->cur_ts);
 		break;
+	case C2PS_NOTIFIER_TASK_SINGLE_SHOT:
+		c2ps_notifier_wq_cb_task_single_shot(
+			vpPush->overwrite_uclamp_max, vpPush->idle_rate_alert,
+			vpPush->timeout, vpPush->uclamp_max_placeholder1,
+			vpPush->uclamp_max_placeholder2, vpPush->uclamp_max_placeholder3,
+			vpPush->reset_param);
+		break;
 	default:
 		C2PS_LOGE("unhandled push type = %d\n",
 				vpPush->ePushType);
@@ -330,6 +378,13 @@ int c2ps_notify_init(
 		cfg_camfps, max_uclamp_cluster0, max_uclamp_cluster1,
 		max_uclamp_cluster2);
 
+	// FIXME: temp solution to hint heavyloading scene with EAS setting
+	if (unlikely(cfg_camfps == 0 && max_uclamp_cluster0 == 0 &&
+		max_uclamp_cluster1 == 0 && max_uclamp_cluster2 == 0)) {
+		set_heavyloading_special_setting();
+		goto out;
+	}
+
 	// set_config_camfps(cfg_camfps);
 
 	// enable sugov per-gear uclamp max feature
@@ -337,7 +392,7 @@ int c2ps_notify_init(
 	set_gear_uclamp_max(0, max_uclamp_cluster0);
 	set_gear_uclamp_max(1, max_uclamp_cluster1);
 	set_gear_uclamp_max(2, max_uclamp_cluster2);
-	set_rt_aggre_preempt(0);
+	// set_rt_aggre_preempt(0);
 
 	// enable sugov curr_uclamp feature
 	set_curr_uclamp_ctrl(1);
@@ -359,6 +414,7 @@ int c2ps_notify_init(
 	}
 
 	vpPush->ePushType = C2PS_NOTIFIER_INIT;
+	vpPush->camfps = cfg_camfps;
 	c2ps_queue_work(vpPush);
 
 out:
@@ -396,7 +452,7 @@ out:
 }
 
 int c2ps_notify_add_task(
-    u32 task_id, u32 task_target_time, u32 default_uclamp,
+	u32 task_id, u32 task_target_time, u32 default_uclamp,
 	int group_head, u32 task_group_target_time,
 	bool is_vip_task, bool is_dynamic_tid,
 	const char *task_name)
@@ -601,6 +657,64 @@ out:
 	return ret;
 }
 
+int c2ps_notify_task_single_shot(
+	int *uclamp_max, int idle_rate_alert, int timeout,
+	int *uclamp_max_placeholder1, int *uclamp_max_placeholder2,
+	int *uclamp_max_placeholder3, bool reset_param)
+{
+	struct C2PS_NOTIFIER_PUSH_TAG *vpPush = NULL;
+	int ret = 0;
+
+	if (!uclamp_max || !uclamp_max_placeholder1 ||
+		!uclamp_max_placeholder2 || !uclamp_max_placeholder3) {
+		C2PS_LOGE("null uclamp max pointer\n");
+		ret = -EINVAL;
+		goto out;
+	}
+
+	vpPush = (struct C2PS_NOTIFIER_PUSH_TAG *)
+		c2ps_alloc_atomic(sizeof(*vpPush));
+
+	if (!vpPush) {
+		C2PS_LOGE("OOM\n");
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	if (!c2ps_tsk) {
+		C2PS_LOGE("NULL WorkQueue\n");
+		c2ps_free(vpPush, sizeof(*vpPush));
+		ret = -EINVAL;
+		goto out;
+	}
+
+	memset(vpPush->overwrite_uclamp_max, 0,
+		MAX_NUMBER_OF_CLUSTERS * sizeof(int));
+	memcpy(vpPush->overwrite_uclamp_max, uclamp_max,
+		MAX_NUMBER_OF_CLUSTERS * sizeof(int));
+	memset(vpPush->uclamp_max_placeholder1, 0,
+		MAX_NUMBER_OF_CLUSTERS * sizeof(int));
+	memcpy(vpPush->uclamp_max_placeholder1, uclamp_max_placeholder1,
+		MAX_NUMBER_OF_CLUSTERS * sizeof(int));
+	memset(vpPush->uclamp_max_placeholder2, 0,
+		MAX_NUMBER_OF_CLUSTERS * sizeof(int));
+	memcpy(vpPush->uclamp_max_placeholder2, uclamp_max_placeholder2,
+		MAX_NUMBER_OF_CLUSTERS * sizeof(int));
+	memset(vpPush->uclamp_max_placeholder3, 0,
+		MAX_NUMBER_OF_CLUSTERS * sizeof(int));
+	memcpy(vpPush->uclamp_max_placeholder3, uclamp_max_placeholder3,
+		MAX_NUMBER_OF_CLUSTERS * sizeof(int));
+	vpPush->idle_rate_alert = idle_rate_alert;
+	vpPush->timeout = timeout;
+	vpPush->reset_param = reset_param;
+	vpPush->ePushType = C2PS_NOTIFIER_TASK_SINGLE_SHOT;
+
+	c2ps_queue_work(vpPush);
+
+out:
+	return ret;
+}
+
 static void self_uninit_timer_callback(struct timer_list *t)
 {
 	C2PS_LOGD("uninit expired");
@@ -611,6 +725,7 @@ static int __init c2ps_init(void)
 {
 	C2PS_LOGD("+ \n");
 
+	c2ps_nr_clusters = get_nr_gears();
 	c2ps_tsk = kthread_create(c2ps_thread_loop, NULL, "c2ps_thread_loop");
 
 	if (c2ps_tsk == NULL)
@@ -625,6 +740,7 @@ static int __init c2ps_init(void)
 	c2ps_notify_vsync_fp = c2ps_notify_vsync;
 	c2ps_notify_camfps_fp = c2ps_notify_camfps;
 	c2ps_notify_task_scene_change_fp = c2ps_notify_task_scene_change;
+	c2ps_notify_task_single_shot_fp = c2ps_notify_task_single_shot;
 
 	c2ps_sysfs_init();
 	if (unlikely(uclamp_regulator_init())) {

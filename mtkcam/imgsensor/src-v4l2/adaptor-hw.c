@@ -10,7 +10,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/regulator/consumer.h>
 #include <linux/pinctrl/consumer.h>
-
+#include "kd_imgsensor.h"
 #include "kd_imgsensor_define_v4l2.h"
 #include "adaptor.h"
 #include "adaptor-hw.h"
@@ -37,7 +37,7 @@ static const char * const reg_names[] = {
 static const char * const state_names[] = {
 	ADAPTOR_STATE_NAMES
 };
-
+extern int hwLevel;
 static struct clk *get_clk_by_idx_freq(struct adaptor_ctx *ctx,
 				unsigned long long idx, int freq)
 {
@@ -69,10 +69,14 @@ static struct clk *get_clk_by_idx_freq(struct adaptor_ctx *ctx,
 		case 19:
 			return ctx->clk[CLK1_19_2M];
 		case 24:
+#if IMGSENSOR_AOV_EINT_UT
+			return ctx->clk[CLK1_26M];
+#else
 			if (ctx->aov_mclk_ulposc_flag)
 				return ctx->clk[CLK1_26M_ULPOSC];
 			else
 				return ctx->clk[CLK1_24M];
+#endif
 		case 26:
 			if (ctx->aov_mclk_ulposc_flag)
 				return ctx->clk[CLK1_26M_ULPOSC];
@@ -95,33 +99,32 @@ static int set_mclk(struct adaptor_ctx *ctx, void *data, int val)
 	idx = (unsigned long long)data;
 	mclk = ctx->clk[idx];
 	mclk_src = get_clk_by_idx_freq(ctx, idx, val);
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]+ idx(%llu),val(%d)\n", __func__, idx, val);
-#endif
+
+	adaptor_logd(ctx, "E! idx(%llu),val(%d)\n", idx, val);
+
 	ret = clk_prepare_enable(mclk);
 	if (ret) {
-		dev_info(ctx->dev,
+		adaptor_logi(ctx,
 			"clk_prepare_enable(%s),ret(%d)(fail)\n",
 			clk_names[idx], ret);
 		return ret;
 	}
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev,
+	adaptor_logd(ctx,
 		"clk_prepare_enable(%s),ret(%d)(correct)\n",
 		clk_names[idx], ret);
-#endif
+
 	ret = clk_set_parent(mclk, mclk_src);
 	if (ret) {
-		dev_info(ctx->dev,
+		adaptor_logi(ctx,
 			"mclk(%s) clk_set_parent (%s),ret(%d)(fail)\n",
 			__clk_get_name(mclk), __clk_get_name(mclk_src), ret);
+		WRAP_AEE_EXCEPTION("clk_set_parent", "Err");
 		return ret;
 	}
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev,
-		"[%s]- clk_set_parent(%s),ret(%d)(correct)\n",
-		__func__, __clk_get_name(mclk_src), ret);
-#endif
+	adaptor_logd(ctx,
+		"X! clk_set_parent(%s),ret(%d)(correct)\n",
+		__clk_get_name(mclk_src), ret);
+
 	return 0;
 }
 
@@ -133,15 +136,14 @@ static int unset_mclk(struct adaptor_ctx *ctx, void *data, int val)
 	idx = (unsigned long long)data;
 	mclk = ctx->clk[idx];
 	mclk_src = get_clk_by_idx_freq(ctx, idx, val);
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]+ idx(%llu),val(%d)\n", __func__, idx, val);
-#endif
+
+	adaptor_logd(ctx, "E! idx(%llu),val(%d)\n", idx, val);
+
 	clk_disable_unprepare(mclk);
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev,
-		"[%s]- clk_disable_unprepare(%s)\n",
-		__func__, clk_names[idx]);
-#endif
+
+	adaptor_logd(ctx,
+		"X! clk_disable_unprepare(%s)\n", clk_names[idx]);
+
 	return 0;
 }
 
@@ -156,38 +158,36 @@ static int set_reg(struct adaptor_ctx *ctx, void *data, int val)
 	ctx->regulator[idx] = devm_regulator_get_optional(ctx->dev, reg_names[idx]);
 	if (IS_ERR(ctx->regulator[idx])) {
 		ctx->regulator[idx] = NULL;
-		dev_dbg(ctx->dev, "no reg %s\n", reg_names[idx]);
+		dev_dbg(ctx->dev,
+			"[%s] no reg %s\n", __func__, reg_names[idx]);
 		return -EINVAL;
 	}
 
 	reg = ctx->regulator[idx];
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]+ idx(%llu),val(%d)\n", __func__, idx, val);
-#endif
+
+	adaptor_logd(ctx, "E! idx(%llu),val(%d)\n", idx, val);
+
 	ret = regulator_set_voltage(reg, val, val);
 	if (ret) {
 		dev_dbg(ctx->dev,
-			"regulator_set_voltage(%s),val(%d),ret(%llu)(fail)\n",
-			reg_names[idx], val, ret);
+			"[%s] regulator_set_voltage(%s),val(%d),ret(%llu)(fail)\n",
+			__func__, reg_names[idx], val, ret);
 	}
-#if IMGSENSOR_LOG_MORE
-	else
-		dev_info(ctx->dev,
-			"regulator_set_voltage(%s),val(%d),ret(%llu)(correct)\n",
-			reg_names[idx], val, ret);
-#endif
+	adaptor_logd(ctx,
+		"regulator_set_voltage(%s),val(%d),ret(%llu)(correct)\n",
+		reg_names[idx], val, ret);
+
 	ret = regulator_enable(reg);
 	if (ret) {
 		dev_dbg(ctx->dev,
-			"regulator_enable(%s),ret(%llu)(fail)\n",
-			reg_names[idx], ret);
+			"[%s] regulator_enable(%s),ret(%llu)(fail)\n",
+			__func__, reg_names[idx], ret);
 		return ret;
 	}
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev,
-		"[%s]- regulator_enable(%s),ret(%llu)(correct)\n",
-		__func__, reg_names[idx], ret);
-#endif
+	adaptor_logd(ctx,
+		"X! regulator_enable(%s),ret(%llu)(correct)\n",
+		reg_names[idx], ret);
+
 	return 0;
 }
 
@@ -198,23 +198,22 @@ static int unset_reg(struct adaptor_ctx *ctx, void *data, int val)
 
 	idx = (unsigned long long)data;
 	reg = ctx->regulator[idx];
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]+ idx(%llu),val(%d)\n", __func__, idx, val);
-#endif
+
+	adaptor_logd(ctx, "E! idx(%llu),val(%d)\n", idx, val);
+
 	ret = regulator_disable(reg);
 	if (ret) {
 		dev_dbg(ctx->dev,
-			"disable(%s),ret(%llu)(fail)\n",
-			reg_names[idx], ret);
+			"[%s] disable(%s),ret(%llu)(fail)\n",
+			__func__, reg_names[idx], ret);
 		return ret;
 	}
 	// always put reg due to pmic limitation
 	devm_regulator_put(ctx->regulator[idx]);
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev,
-		"[%s]- disable(%s),ret(%llu)(correct)\n",
-		__func__, reg_names[idx], ret);
-#endif
+
+	adaptor_logd(ctx,
+		"X! disable(%s),ret(%llu)(correct)\n", reg_names[idx], ret);
+
 	return 0;
 }
 
@@ -225,21 +224,24 @@ static int set_state(struct adaptor_ctx *ctx, void *data, int val)
 
 	idx = (unsigned long long)data;
 	x = idx + val;
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]+ idx(%llu),val(%d)\n", __func__, idx, val);
-#endif
+
+	adaptor_logd(ctx, "E! idx(%llu),val(%d)\n", idx, val);
+	if (!ctx || !(ctx->subdrv)) {
+		pr_info("[%s] ctx might be null!\n", __func__);
+		return -EINVAL;
+	}
+
 	ret = pinctrl_select_state(ctx->pinctrl, ctx->state[x]);
 	if (ret < 0) {
 		dev_info(ctx->dev,
-			"select(%s),ret(%d)(fail)\n",
-			state_names[x], ret);
+			"[%s] select(%s),ret(%d)(fail)\n",
+			__func__, state_names[x], ret);
 		return ret;
 	}
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev,
-		"[%s]- select(%s),ret(%d)(correct)\n",
-		__func__, state_names[x], ret);
-#endif
+
+	adaptor_logd(ctx,
+		"X! select(%s),ret(%d)(correct)\n", state_names[x], ret);
+
 	return 0;
 }
 
@@ -273,13 +275,17 @@ static int reinit_pinctrl(struct adaptor_ctx *ctx)
 {
 	int i;
 	struct device *dev = ctx->dev;
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]+\n", __func__);
-#endif
+
+	adaptor_logd(ctx, "E!\n");
+	if (!ctx || !(ctx->subdrv)) {
+		pr_info("[%s] ctx might be null!\n", __func__);
+		return -EINVAL;
+	}
+
 	/* pinctrl */
 	ctx->pinctrl = devm_pinctrl_get(dev);
 	if (IS_ERR(ctx->pinctrl)) {
-		dev_err(dev, "fail to get pinctrl\n");
+		dev_dbg(dev, "[%s] fail to get pinctrl\n", __func__);
 		return PTR_ERR(ctx->pinctrl);
 	}
 
@@ -289,12 +295,13 @@ static int reinit_pinctrl(struct adaptor_ctx *ctx)
 				ctx->pinctrl, state_names[i]);
 		if (IS_ERR(ctx->state[i])) {
 			ctx->state[i] = NULL;
-			dev_dbg(dev, "no state %s\n", state_names[i]);
+			dev_dbg(dev,
+				"[%s] no state %s\n", __func__, state_names[i]);
 		}
 	}
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]-\n", __func__);
-#endif
+
+	adaptor_logd(ctx, "X!\n");
+
 	return 0;
 }
 int do_hw_power_on(struct adaptor_ctx *ctx)
@@ -306,19 +313,20 @@ int do_hw_power_on(struct adaptor_ctx *ctx)
 	struct adaptor_log_buf buf;
 	struct subdrv_ctx *subctx;
 	u64 time_boot_begin = 0;
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]+\n", __func__);
-#endif
+
+	adaptor_logd(ctx, "E!\n");
+	if (!ctx || !(ctx->subdrv)) {
+		pr_info("[%s] ctx might be null!\n", __func__);
+		return -EINVAL;
+	}
+
 	if (ctx->sensor_ws) {
 		if (ctx->aov_pm_ops_flag == 0) {
 			ctx->aov_pm_ops_flag = 1;
 			__pm_stay_awake(ctx->sensor_ws);
 		}
-	}
-#if IMGSENSOR_LOG_MORE
-	else
-		dev_info(ctx->dev, "__pm_stay_awake(fail)\n");
-#endif
+	} else
+		adaptor_logi(ctx, "__pm_stay_awake(fail)\n");
 
 	adaptor_log_buf_init(&buf, ADAPTOR_LOG_BUF_SZ);
 
@@ -339,10 +347,22 @@ int do_hw_power_on(struct adaptor_ctx *ctx)
 			ent = &ctx->ctx_pw_seq[i]; // use ctx pw seq
 		else
 			ent = &ctx->subdrv->pw_seq[i];
+
+		if((ctx->subdrv->id == MALACHITES5KHP3WIDE_SENSOR_ID) || (ctx->subdrv->id == MALACHITEIMX882WIDE_SENSOR_ID)) {
+			if((hwLevel < 3)  && (ent->id == HW_ID_AVDD1)) {//p01 dont use avdd1
+				dev_info(ctx->dev,"%s power_on dont use %d\n", ctx->subdrv->name, ent->id);
+				continue;
+			}
+			if((hwLevel >= 3)  && (ent->id == HW_ID_AVDD)) {//p1 dont use avdd
+				dev_info(ctx->dev,"%s power_on dont use %d\n", ctx->subdrv->name, ent->id);
+				continue;
+			}
+		}
+
 		op = &ctx->hw_ops[ent->id];
 		if (!op->set) {
-			dev_dbg(ctx->dev, "cannot set comp %d val %d\n",
-				ent->id, ent->val);
+			adaptor_logd(ctx,
+				"cannot set comp:%d,val:%d\n", ent->id, ent->val);
 			continue;
 		}
 
@@ -366,10 +386,8 @@ int do_hw_power_on(struct adaptor_ctx *ctx)
 			}
 		}
 
-#if IMGSENSOR_LOG_MORE
-		dev_dbg(ctx->dev, "set comp %d val %d\n",
-			ent->id, ent->val);
-#endif
+		adaptor_logi(ctx, "husf set comp:%d,val:%d\n", ent->id, ent->val);
+
 		if (ent->delay)
 			mdelay(ent->delay);
 	}
@@ -381,9 +399,8 @@ int do_hw_power_on(struct adaptor_ctx *ctx)
 
 	if (ctx->subdrv->ops->power_on)
 		subdrv_call(ctx, power_on, NULL);
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]-\n", __func__);
-#endif
+
+	adaptor_logd(ctx, "X!\n");
 
 	adaptor_log_buf_flush(ctx, __func__, &buf);
 	adaptor_log_buf_deinit(&buf);
@@ -393,21 +410,27 @@ int do_hw_power_on(struct adaptor_ctx *ctx)
 
 int adaptor_hw_power_on(struct adaptor_ctx *ctx)
 {
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]+\n", __func__);
-#endif
+	int ret = 0;
+
+	adaptor_logd(ctx, "E!\n");
+	if (!ctx || !(ctx->subdrv)) {
+		pr_info("[%s] ctx might be null!\n", __func__);
+		return -EINVAL;
+	}
 #ifndef IMGSENSOR_USE_PM_FRAMEWORK
-	dev_dbg(ctx->dev, "%s power ref cnt = %d\n", __func__, ctx->power_refcnt);
+	adaptor_logd(ctx, "power ref cnt:%d\n", ctx->power_refcnt);
 	ctx->power_refcnt++;
 	if (ctx->power_refcnt > 1) {
-		dev_dbg(ctx->dev, "%s already powered, cnt = %d\n", __func__, ctx->power_refcnt);
+		adaptor_logd(ctx, "already powered,cnt:%d\n", ctx->power_refcnt);
 		return 0;
 	}
 #endif
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]-\n", __func__);
-#endif
-	return do_hw_power_on(ctx);
+
+	ret = do_hw_power_on(ctx);
+
+	adaptor_logd(ctx, "X!\n");
+
+	return ret;
 }
 
 int do_hw_power_off(struct adaptor_ctx *ctx)
@@ -415,11 +438,28 @@ int do_hw_power_off(struct adaptor_ctx *ctx)
 	int i;
 	const struct subdrv_pw_seq_entry *ent;
 	struct adaptor_hw_ops *op;
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]+\n", __func__);
-#endif
+
+	adaptor_logd(ctx, "E!\n");
+	if (!ctx || !(ctx->subdrv)) {
+		pr_info("[%s] ctx might be null!\n", __func__);
+		return -EINVAL;
+	}
+
 	/* call subdrv close function before pwr off */
 	subdrv_call(ctx, close);
+
+	if ((ctx->subctx.s_ctx.mode) &&
+		(ctx->subctx.current_scenario_id < ctx->subctx.s_ctx.sensor_mode_num) &&
+		ctx->subctx.s_ctx.mode[ctx->subctx.current_scenario_id].rosc_mode) {
+		for (i = 0; i < ctx->mclk_refcnt; i++) {
+			// enable mclk
+			if (clk_prepare_enable(ctx->clk[CLK1_MCLK1]))
+				dev_info(ctx->dev,
+				"clk_prepare_enable CLK1_MCLK1(fail)\n");
+		}
+		dev_info(ctx->dev, "[%s] rosc_mode recover. enable aov mclk.\n", __func__);
+		ctx->mclk_refcnt = 0;
+	}
 
 	if (ctx->subdrv->ops->power_off)
 		subdrv_call(ctx, power_off, NULL);
@@ -429,10 +469,30 @@ int do_hw_power_off(struct adaptor_ctx *ctx)
 			ent = &ctx->ctx_pw_seq[i]; // use ctx pw seq
 		else
 			ent = &ctx->subdrv->pw_seq[i];
+
+		if(ctx->subdrv->id == MALACHITEIMX882WIDE_SENSOR_ID) {
+			if((hwLevel < 3)  && (ent->id == HW_ID_AVDD1)) {//p01 dont use avdd1
+				dev_info(ctx->dev,"%s power_off  dont use %d\n", ctx->subdrv->name, ent->id);
+				continue;
+			}
+			if((hwLevel >= 3)  && (ent->id == HW_ID_AVDD)) {//p1 dont use avdd
+				dev_info(ctx->dev,"%s power_off dont use %d\n", ctx->subdrv->name, ent->id);
+				continue;
+			}
+		}
+		if(ctx->subdrv->id == MALACHITES5KHP3WIDE_SENSOR_ID) {
+			if((ent->id == HW_ID_AVDD1) || (ent->id == HW_ID_AVDD)) {
+				dev_info(ctx->dev,"%s power_off dont use %d\n", ctx->subdrv->name, ent->id);
+				continue;
+			}
+		}
 		op = &ctx->hw_ops[ent->id];
 		if (!op->unset)
 			continue;
+
 		op->unset(ctx, op->data, ent->val);
+		dev_info(ctx->dev,"unset comp:%d,val:%d\n", ent->id, ent->val);
+
 		//msleep(ent->delay);
 	}
 
@@ -454,30 +514,33 @@ int do_hw_power_off(struct adaptor_ctx *ctx)
 			ctx->aov_pm_ops_flag = 0;
 			__pm_relax(ctx->sensor_ws);
 		}
-	}
-#if IMGSENSOR_LOG_MORE
-	else
-		dev_info(ctx->dev, "__pm_relax(fail)\n");
+	} else
+		adaptor_logi(ctx, "__pm_relax(fail)\n");
 
-	dev_info(ctx->dev, "[%s]-\n", __func__);
-#endif
+	adaptor_logd(ctx, "X!\n");
+
 	return 0;
 }
 int adaptor_hw_power_off(struct adaptor_ctx *ctx)
 {
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]+\n", __func__);
-#endif
+	int ret = 0;
+
+	adaptor_logd(ctx, "E!\n");
+	if (!ctx || !(ctx->subdrv)) {
+		pr_info("[%s] ctx might be null!\n", __func__);
+		return -EINVAL;
+	}
 #ifndef IMGSENSOR_USE_PM_FRAMEWORK
 	if (!ctx->power_refcnt) {
-		dev_dbg(ctx->dev, "%s power ref cnt = %d, skip due to not power on yet\n",
-			__func__, ctx->power_refcnt);
+		adaptor_logd(ctx,
+			"power ref cnt:%d,skip due to not power on yet\n",
+			ctx->power_refcnt);
 		return 0;
 	}
-	dev_dbg(ctx->dev, "%s power ref cnt = %d\n", __func__, ctx->power_refcnt);
+	adaptor_logd(ctx, "power ref cnt:%d\n", ctx->power_refcnt);
 	ctx->power_refcnt--;
 	if (ctx->power_refcnt > 0) {
-		dev_dbg(ctx->dev, "%s skip due to cnt = %d\n", __func__, ctx->power_refcnt);
+		adaptor_logd(ctx, "skip due to cnt:%d\n", ctx->power_refcnt);
 		return 0;
 	}
 	ctx->power_refcnt = 0;
@@ -485,25 +548,27 @@ int adaptor_hw_power_off(struct adaptor_ctx *ctx)
 	ctx->is_sensor_scenario_inited = 0;
 	ctx->is_streaming = 0;
 #endif
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]-\n", __func__);
-#endif
-	return do_hw_power_off(ctx);
+
+	ret = do_hw_power_off(ctx);
+
+	adaptor_logd(ctx, "X!\n");
+
+	return ret;
 }
 
 int adaptor_hw_init(struct adaptor_ctx *ctx)
 {
 	int i;
 	struct device *dev = ctx->dev;
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]+\n", __func__);
-#endif
+
+	adaptor_logd(ctx, "E!\n");
+
 	/* clocks */
 	for (i = 0; i < CLK_MAXCNT; i++) {
 		ctx->clk[i] = devm_clk_get(dev, clk_names[i]);
 		if (IS_ERR(ctx->clk[i])) {
 			ctx->clk[i] = NULL;
-			dev_dbg(dev, "no clk %s\n", clk_names[i]);
+			dev_dbg(dev, "[%s] no clk %s\n", __func__, clk_names[i]);
 		}
 	}
 
@@ -513,14 +578,14 @@ int adaptor_hw_init(struct adaptor_ctx *ctx)
 				dev, reg_names[i]);
 		if (IS_ERR(ctx->regulator[i])) {
 			ctx->regulator[i] = NULL;
-			dev_dbg(dev, "no reg %s\n", reg_names[i]);
+			dev_dbg(dev, "[%s] no reg %s\n", __func__, reg_names[i]);
 		}
 	}
 
 	/* pinctrl */
 	ctx->pinctrl = devm_pinctrl_get(dev);
 	if (IS_ERR(ctx->pinctrl)) {
-		dev_err(dev, "fail to get pinctrl\n");
+		dev_dbg(dev, "[%s] fail to get pinctrl\n", __func__);
 		return PTR_ERR(ctx->pinctrl);
 	}
 
@@ -530,7 +595,7 @@ int adaptor_hw_init(struct adaptor_ctx *ctx)
 				ctx->pinctrl, state_names[i]);
 		if (IS_ERR(ctx->state[i])) {
 			ctx->state[i] = NULL;
-			dev_dbg(dev, "no state %s\n", state_names[i]);
+			dev_dbg(dev, "[%s] no state %s\n", __func__, state_names[i]);
 		}
 	}
 
@@ -660,19 +725,23 @@ int adaptor_hw_init(struct adaptor_ctx *ctx)
 		devm_pinctrl_put(ctx->pinctrl);
 		ctx->pinctrl = NULL;
 	}
-#if IMGSENSOR_LOG_MORE
-	dev_info(ctx->dev, "[%s]-\n", __func__);
-#endif
+
+	adaptor_logd(ctx, "X!\n");
+
 	return 0;
 }
 
 int adaptor_hw_sensor_reset(struct adaptor_ctx *ctx)
 {
-	dev_info(ctx->dev, "%s %d|%d|%d\n",
-		__func__,
+	adaptor_logd(ctx,
+		"E! %d|%d|%d\n",
 		ctx->is_streaming,
 		ctx->is_sensor_inited,
 		ctx->power_refcnt);
+	if (!ctx || !(ctx->subdrv)) {
+		pr_info("[%s] ctx might be null!\n", __func__);
+		return -EINVAL;
+	}
 
 	if (ctx->is_streaming == 1 &&
 		ctx->is_sensor_inited == 1 &&
@@ -683,8 +752,8 @@ int adaptor_hw_sensor_reset(struct adaptor_ctx *ctx)
 
 		return 0;
 	}
-	dev_info(ctx->dev, "%s skip to reset due to either integration or else\n",
-		__func__);
+	adaptor_logd(ctx,
+		"X! skip to reset due to either integration or else\n");
 
 	return -1;
 }

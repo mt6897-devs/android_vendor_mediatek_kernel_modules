@@ -22,6 +22,8 @@
  ****************************************************************************/
 #include "imx598litemipiraw_Sensor.h"
 
+#define IMX598LITE_EMBEDDED_DATA_EN 1
+
 static int get_sensor_temperature(void *arg);
 static void set_group_hold(void *arg, u8 en);
 static u16 get_gain2reg(u32 gain);
@@ -97,6 +99,18 @@ static struct mtk_mbus_frame_desc_entry frame_desc_prev[] = {
 			.user_data_desc = VC_PDAF_STATS_PIX_1,
 		},
 	},
+#if IMX598LITE_EMBEDDED_DATA_EN
+	{
+		.bus.csi2 = {
+			.channel = 0,
+			.data_type = 0x12,
+			.hsize = 0x0FA0,
+			.vsize = 0x2,
+			.user_data_desc = VC_GENERAL_EMBEDDED,
+			.ebd_parsing_type = MTK_EBD_PARSING_TYPE_MIPI_RAW10,
+		},
+	},
+#endif
 };
 
 static struct mtk_mbus_frame_desc_entry frame_desc_cap[] = {
@@ -119,6 +133,18 @@ static struct mtk_mbus_frame_desc_entry frame_desc_cap[] = {
 			.user_data_desc = VC_PDAF_STATS_PIX_1,
 		},
 	},
+#if IMX598LITE_EMBEDDED_DATA_EN
+	{
+		.bus.csi2 = {
+			.channel = 0,
+			.data_type = 0x12,
+			.hsize = 0x0FA0,
+			.vsize = 0x2,
+			.user_data_desc = VC_GENERAL_EMBEDDED,
+			.ebd_parsing_type = MTK_EBD_PARSING_TYPE_MIPI_RAW10,
+		},
+	},
+#endif
 };
 
 static struct mtk_mbus_frame_desc_entry frame_desc_vid[] = {
@@ -131,6 +157,18 @@ static struct mtk_mbus_frame_desc_entry frame_desc_vid[] = {
 			.user_data_desc = VC_STAGGER_NE,
 		},
 	},
+#if IMX598LITE_EMBEDDED_DATA_EN
+	{
+		.bus.csi2 = {
+			.channel = 0,
+			.data_type = 0x12,
+			.hsize = 0x0FA0,
+			.vsize = 0x2,
+			.user_data_desc = VC_GENERAL_EMBEDDED,
+			.ebd_parsing_type = MTK_EBD_PARSING_TYPE_MIPI_RAW10,
+		},
+	},
+#endif
 };
 
 static struct mtk_mbus_frame_desc_entry frame_desc_hs_vid[] = {
@@ -143,6 +181,18 @@ static struct mtk_mbus_frame_desc_entry frame_desc_hs_vid[] = {
 			.user_data_desc = VC_STAGGER_NE,
 		},
 	},
+#if IMX598LITE_EMBEDDED_DATA_EN
+	{
+		.bus.csi2 = {
+			.channel = 0,
+			.data_type = 0x12,
+			.hsize = 0x0F00,
+			.vsize = 0x2,
+			.user_data_desc = VC_GENERAL_EMBEDDED,
+			.ebd_parsing_type = MTK_EBD_PARSING_TYPE_MIPI_RAW10,
+		},
+	},
+#endif
 };
 
 static struct mtk_mbus_frame_desc_entry frame_desc_slim_vid[] = {
@@ -151,10 +201,22 @@ static struct mtk_mbus_frame_desc_entry frame_desc_slim_vid[] = {
 			.channel = 0,
 			.data_type = 0x2b,
 			.hsize = 0x0FA0,
-			.vsize = 0x08D0,
+			.vsize = 0x0BB8,
 			.user_data_desc = VC_STAGGER_NE,
 		},
 	},
+#if IMX598LITE_EMBEDDED_DATA_EN
+	{
+		.bus.csi2 = {
+			.channel = 0,
+			.data_type = 0x12,
+			.hsize = 0x0FA0,
+			.vsize = 0x2,
+			.user_data_desc = VC_GENERAL_EMBEDDED,
+			.ebd_parsing_type = MTK_EBD_PARSING_TYPE_MIPI_RAW10,
+		},
+	},
+#endif
 };
 
 static struct subdrv_mode_struct mode_struct[] = {
@@ -169,11 +231,11 @@ static struct subdrv_mode_struct mode_struct[] = {
 		.hdr_mode = HDR_NONE,
 		.raw_cnt = 1,
 		.exp_cnt = 1,
-		.pclk = 777000000,
+		.pclk = 777600000,
 		.linelength = 7872,
 		.framelength = 3292,
 		.max_framerate = 300,
-		.mipi_pixel_rate = 493000000,
+		.mipi_pixel_rate = 493200000,
 		.readout_length = 0,
 		.read_margin = 10,
 		.framelength_step = 1,
@@ -203,8 +265,6 @@ static struct subdrv_mode_struct mode_struct[] = {
 		.fine_integ_line = 634,
 		.delay_frame = 3,
 		.csi_param = {
-			.dphy_data_settle = 59,
-			.dphy_clk_settle = 59,
 		},
 		.sensor_output_dataformat = SENSOR_OUTPUT_FORMAT_RAW_4CELL_HW_BAYER_R,
 	},
@@ -219,11 +279,11 @@ static struct subdrv_mode_struct mode_struct[] = {
 		.hdr_mode = HDR_NONE,
 		.raw_cnt = 1,
 		.exp_cnt = 1,
-		.pclk = 777000000,
+		.pclk = 777600000,
 		.linelength = 7872,
 		.framelength = 3292,
 		.max_framerate = 300,
-		.mipi_pixel_rate = 493000000,
+		.mipi_pixel_rate = 493200000,
 		.readout_length = 0,
 		.read_margin = 10,
 		.framelength_step = 1,
@@ -253,8 +313,6 @@ static struct subdrv_mode_struct mode_struct[] = {
 		.fine_integ_line = 634,
 		.delay_frame = 3,
 		.csi_param = {
-			.dphy_data_settle = 59,
-			.dphy_clk_settle = 59,
 		},
 		.sensor_output_dataformat = SENSOR_OUTPUT_FORMAT_RAW_4CELL_HW_BAYER_R,
 	},
@@ -273,7 +331,7 @@ static struct subdrv_mode_struct mode_struct[] = {
 		.linelength = 4592,
 		.framelength = 2526,
 		.max_framerate = 300,
-		.mipi_pixel_rate = 320000000,
+		.mipi_pixel_rate = 320400000,
 		.readout_length = 0,
 		.read_margin = 10,
 		.framelength_step = 1,
@@ -303,8 +361,11 @@ static struct subdrv_mode_struct mode_struct[] = {
 		.fine_integ_line = 357,
 		.delay_frame = 3,
 		.csi_param = {
-			.dphy_data_settle = 59,
-			.dphy_clk_settle = 59,
+			.not_fixed_dphy_settle = 1,
+			.not_fixed_trail_settle = 1,
+			.dphy_trail = 1,
+			.dphy_data_settle = 44,
+			.dphy_clk_settle = 44,
 		},
 		.sensor_output_dataformat = SENSOR_OUTPUT_FORMAT_RAW_4CELL_HW_BAYER_R,
 	},
@@ -319,11 +380,11 @@ static struct subdrv_mode_struct mode_struct[] = {
 		.hdr_mode = HDR_NONE,
 		.raw_cnt = 1,
 		.exp_cnt = 1,
-		.pclk = 633000000,
+		.pclk = 633600000,
 		.linelength = 4592,
 		.framelength = 2298,
 		.max_framerate = 600,
-		.mipi_pixel_rate = 571000000,
+		.mipi_pixel_rate = 571600000,
 		.readout_length = 0,
 		.read_margin = 10,
 		.framelength_step = 1,
@@ -353,8 +414,6 @@ static struct subdrv_mode_struct mode_struct[] = {
 		.fine_integ_line = 357,
 		.delay_frame = 3,
 		.csi_param = {
-			.dphy_data_settle = 59,
-			.dphy_clk_settle = 59,
 		},
 		.sensor_output_dataformat = SENSOR_OUTPUT_FORMAT_RAW_4CELL_HW_BAYER_R,
 	},
@@ -369,7 +428,7 @@ static struct subdrv_mode_struct mode_struct[] = {
 		.hdr_mode = HDR_NONE,
 		.raw_cnt = 1,
 		.exp_cnt = 1,
-		.pclk = 453000000,
+		.pclk = 453600000,
 		.linelength = 4592,
 		.framelength = 3292,
 		.max_framerate = 300,
@@ -403,8 +462,6 @@ static struct subdrv_mode_struct mode_struct[] = {
 		.fine_integ_line = 357,
 		.delay_frame = 3,
 		.csi_param = {
-			.dphy_data_settle = 59,
-			.dphy_clk_settle = 59,
 		},
 		.sensor_output_dataformat = SENSOR_OUTPUT_FORMAT_RAW_4CELL_HW_BAYER_R,
 	},
@@ -449,7 +506,7 @@ static struct subdrv_static_ctx static_ctx = {
 	.frame_length_max = 0xFFFF,
 	.ae_effective_frame = 2,///SHUTTER AND GAIN N+1 (long expose used)
 	.frame_time_delay_frame = 3,
-	.start_exposure_offset = 5500000,
+	.start_exposure_offset = 6200000,
 
 	.pdaf_type = PDAF_SUPPORT_CAMSV,
 	.hdr_type = HDR_SUPPORT_NA,  //check this sensor is stagger or not.
@@ -490,6 +547,43 @@ static struct subdrv_static_ctx static_ctx = {
 	.chk_s_off_end = 0,
 
 	.checksum_value = 0xecaae2a0,
+
+	.ebd_info = {
+		.frm_cnt_loc = {
+			.loc_line = 1,
+			.loc_pix = {7},
+		},
+		.coarse_integ_loc = {
+			{  // NE
+				.loc_line = 1,
+				.loc_pix = {47, 49},
+			},
+		},
+		.ana_gain_loc = {
+			{  // NE
+				.loc_line = 1,
+				.loc_pix = {51, 53},
+			},
+		},
+		.dig_gain_loc = {
+			{  // NE
+				.loc_line = 1,
+				.loc_pix = {57, 59},
+			},
+		},
+		.coarse_integ_shift_loc = {
+			.loc_line = 2,
+			.loc_pix = {97},
+		},
+		.framelength_loc = {
+			.loc_line = 1,
+			.loc_pix = {135, 137},
+		},
+		.temperature_loc = {
+			.loc_line = 1,
+			.loc_pix = {37},
+		},
+	},
 };
 
 static struct subdrv_ops ops = {
@@ -506,6 +600,7 @@ static struct subdrv_ops ops = {
 	.get_csi_param = common_get_csi_param,
 	.vsync_notify = vsync_notify,
 	.update_sof_cnt = common_update_sof_cnt,
+	.parse_ebd_line = common_parse_ebd_line,
 };
 
 static struct subdrv_pw_seq_entry pw_seq[] = {
@@ -548,7 +643,7 @@ static int get_sensor_temperature(void *arg)
 	else
 		temperature_convert = (char)temperature;
 
-	DRV_LOG(ctx, "temperature: %d degrees\n", temperature_convert);
+	DRV_LOG_MUST(ctx, "temperature: %d degrees\n", temperature_convert);
 	return temperature_convert;
 }
 
@@ -622,7 +717,7 @@ static int get_imgsensor_id(struct subdrv_ctx *ctx, u32 *sensor_id)
 			if (addr_ll)
 				*sensor_id = ((*sensor_id) << 8) | subdrv_i2c_rd_u8(ctx, addr_ll);
 			*sensor_id +=1;
-			DRV_LOG(ctx, "i2c_write_id(0x%x) sensor_id(0x%x/0x%x)\n",
+			DRV_LOG_MUST(ctx, "i2c_write_id(0x%x) sensor_id(0x%x/0x%x)\n",
 				ctx->i2c_write_id, *sensor_id, ctx->s_ctx.sensor_id);
 			if (*sensor_id == IMX598LITE_SENSOR_ID) {
 				*sensor_id = ctx->s_ctx.sensor_id;
@@ -716,7 +811,6 @@ static int open(struct subdrv_ctx *ctx)
 		memcpy(ctx->frame_length_in_lut_rg, ctx->frame_length_in_lut,
 			sizeof(ctx->frame_length_in_lut_rg));
 	}
-
 	return ERROR_NONE;
 }
 

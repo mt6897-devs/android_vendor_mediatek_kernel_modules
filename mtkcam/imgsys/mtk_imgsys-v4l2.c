@@ -582,6 +582,214 @@ static int mtk_imgsys_vb2_video_queue_setup(struct vb2_queue *vq,
 	return 0;
 }
 
+static unsigned long mtk_imgsys_vb2_get_contiguous_size(struct sg_table *sgt)
+{
+	struct scatterlist *s;
+	dma_addr_t expected = sg_dma_address(sgt->sgl);
+	unsigned int i;
+	unsigned long size = 0;
+
+	for_each_sgtable_dma_sg(sgt, s, i) {
+		if (sg_dma_address(s) != expected)
+			break;
+		expected += sg_dma_len(s);
+		size += sg_dma_len(s);
+	}
+	return size;
+}
+
+/*********************************************/
+/*         callbacks for all buffers         */
+/*********************************************/
+
+static void *mtk_imgsys_vb2_cookie(struct vb2_buffer *vb, void *buf_priv)
+{
+	struct mtk_imgsys_vb2_buf *buf = buf_priv;
+
+	return &buf->dma_addr;
+}
+
+static void *mtk_imgsys_vb2_vaddr(struct vb2_buffer *vb, void *buf_priv)
+{
+	struct mtk_imgsys_vb2_buf *buf = buf_priv;
+
+	if (buf->vaddr)
+		return buf->vaddr;
+
+	if (buf->db_attach) {
+		struct iosys_map map;
+
+		if (!dma_buf_vmap(buf->db_attach->dmabuf, &map))
+			buf->vaddr = map.vaddr;
+
+		return buf->vaddr;
+	}
+
+	if (buf->non_coherent_mem)
+		buf->vaddr = dma_vmap_noncontiguous(buf->dev, buf->size,
+						    buf->dma_sgt);
+	return buf->vaddr;
+}
+
+static void mtk_imgsys_vb2_prepare(void *buf_priv)
+{
+	struct mtk_imgsys_vb2_buf *buf = buf_priv;
+	struct sg_table *sgt = buf->dma_sgt;
+
+	/* This takes care of DMABUF and user-enforced cache sync hint */
+	if (buf->vb->skip_cache_sync_on_prepare)
+		return;
+
+	if (!buf->non_coherent_mem)
+		return;
+
+	/* Non-coherent MMAP only */
+	if (buf->vaddr)
+		flush_kernel_vmap_range(buf->vaddr, buf->size);
+
+	/* For both USERPTR and non-coherent MMAP */
+	dma_sync_sgtable_for_device(buf->dev, sgt, buf->dma_dir);
+}
+
+static void mtk_imgsys_vb2_finish(void *buf_priv)
+{
+	struct mtk_imgsys_vb2_buf *buf = buf_priv;
+	struct sg_table *sgt = buf->dma_sgt;
+
+	/* This takes care of DMABUF and user-enforced cache sync hint */
+	if (buf->vb->skip_cache_sync_on_finish)
+		return;
+
+	if (!buf->non_coherent_mem)
+		return;
+
+	/* Non-coherent MMAP only */
+	if (buf->vaddr)
+		invalidate_kernel_vmap_range(buf->vaddr, buf->size);
+
+	/* For both USERPTR and non-coherent MMAP */
+	dma_sync_sgtable_for_cpu(buf->dev, sgt, buf->dma_dir);
+}
+
+static int mtk_imgsys_vb2_map_dmabuf(void *mem_priv)
+{
+	struct mtk_imgsys_vb2_buf *buf = mem_priv;
+	struct sg_table *sgt;
+	unsigned long contig_size;
+
+	if (WARN_ON(!buf->db_attach)) {
+		pr_err("trying to pin a non attached buffer\n");
+		return -EINVAL;
+	}
+
+	if (WARN_ON(buf->dma_sgt)) {
+		pr_err("dmabuf buffer is already pinned\n");
+		return 0;
+	}
+
+	/* get the associated scatterlist for this buffer */
+	sgt = dma_buf_map_attachment(buf->db_attach, buf->dma_dir);
+	if (IS_ERR(sgt)) {
+		pr_err("Error getting dmabuf scatterlist\n");
+		return -EINVAL;
+	}
+
+	/* checking if dmabuf is big enough to store contiguous chunk */
+	contig_size = mtk_imgsys_vb2_get_contiguous_size(sgt);
+	if (contig_size < buf->size) {
+		pr_err("contiguous chunk is too small %lu/%lu\n",
+		       contig_size, buf->size);
+		dma_buf_unmap_attachment(buf->db_attach, sgt, buf->dma_dir);
+		return -EFAULT;
+	}
+
+	buf->dma_addr = sg_dma_address(sgt->sgl);
+	buf->dma_sgt = sgt;
+	buf->vaddr = NULL;
+
+	return 0;
+}
+
+static void mtk_imgsys_vb2_unmap_dmabuf(void *mem_priv)
+{
+	struct mtk_imgsys_vb2_buf *buf = mem_priv;
+	struct sg_table *sgt = buf->dma_sgt;
+	struct iosys_map map = IOSYS_MAP_INIT_VADDR(buf->vaddr);
+
+	if (WARN_ON(!buf->db_attach)) {
+		pr_err("trying to unpin a not attached buffer\n");
+		return;
+	}
+
+	if (WARN_ON(!sgt)) {
+		pr_err("dmabuf buffer is already unpinned\n");
+		return;
+	}
+
+	if (buf->vaddr) {
+		dma_buf_vunmap(buf->db_attach->dmabuf, &map);
+		buf->vaddr = NULL;
+	}
+	dma_buf_unmap_attachment(buf->db_attach, sgt, buf->dma_dir);
+
+	buf->dma_addr = 0;
+	buf->dma_sgt = NULL;
+}
+
+static void *mtk_imgsys_vb2_attach_dmabuf(struct vb2_buffer *vb, struct device *dev,
+				  struct dma_buf *dbuf, unsigned long size)
+{
+	struct mtk_imgsys_vb2_buf *buf;
+	struct dma_buf_attachment *dba;
+
+	if (dbuf->size < size)
+		return ERR_PTR(-EFAULT);
+
+	if (WARN_ON(!dev))
+		return ERR_PTR(-EINVAL);
+
+	buf = kzalloc(sizeof(*buf), GFP_KERNEL);
+	if (!buf)
+		return ERR_PTR(-ENOMEM);
+
+	buf->dev = dev;
+	buf->vb = vb;
+
+	/* create attachment for the dmabuf with the user device */
+	dba = dma_buf_attach(dbuf, buf->dev);
+	if (IS_ERR(dba)) {
+		pr_err("failed to attach dmabuf\n");
+		kfree(buf);
+		return dba;
+	}
+
+	buf->dma_dir = vb->vb2_queue->dma_dir;
+	buf->size = size;
+	buf->db_attach = dba;
+
+	return buf;
+}
+
+static void mtk_imgsys_vb2_detach_dmabuf(void *mem_priv)
+{
+	struct mtk_imgsys_vb2_buf *buf = mem_priv;
+
+	/* if vb2 works correctly you should never detach mapped buffer */
+	if (WARN_ON(buf->dma_addr))
+		mtk_imgsys_vb2_unmap_dmabuf(buf);
+
+	/* detach this attachment */
+	dma_buf_detach(buf->db_attach->dmabuf, buf->db_attach);
+	kfree(buf);
+}
+
+static unsigned int mtk_imgsys_vb2_num_users(void *buf_priv)
+{
+	struct mtk_imgsys_vb2_buf *buf = buf_priv;
+
+	return refcount_read(&buf->refcount);
+}
+
 static void mtk_imgsys_return_all_buffers(struct mtk_imgsys_pipe *pipe,
 				       struct mtk_imgsys_video_device *node,
 				       enum vb2_buffer_state state)
@@ -1566,7 +1774,7 @@ static int mtkdip_ioc_add_kva(struct v4l2_subdev *subdev, void *arg)
 		buf_va_info->buf_fd = fd_info->fds[i];
 		dmabuf = dma_buf_get(fd_info->fds[i]);
 
-		if (IS_ERR(dmabuf)) {
+		if (IS_ERR_OR_NULL(dmabuf)) {
 			dev_info(imgsys_pipe->imgsys_dev->dev, "%s:err fd %d",
 						__func__, fd_info->fds[i]);
 			vfree(buf_va_info);
@@ -1577,8 +1785,11 @@ static int mtkdip_ioc_add_kva(struct v4l2_subdev *subdev, void *arg)
 
 		dma_buf_begin_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
 		ret = dma_buf_vmap(dmabuf, &map);
-		if (ret)
-			pr_info("%s, map kernel va failed\n", __func__);
+		if (ret) {
+			pr_info("%s, map kernel va failed(%d)\n", __func__, ret);
+			dma_buf_put(dmabuf);
+			return -ENOMEM;
+		}
 		buf_va_info->kva = (u64)map.vaddr;
 		buf_va_info->map = map;
 		buf_va_info->dma_buf_putkva = dmabuf;
@@ -1664,11 +1875,13 @@ static int mtkdip_ioc_del_kva(struct v4l2_subdev *subdev, void *arg)
 		mutex_unlock(&(kva_list->mymutex));
 
 		dmabuf = buf_va_info->dma_buf_putkva;
-		dma_buf_vunmap(dmabuf, &buf_va_info->map);
-		dma_buf_end_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
+		if (!IS_ERR_OR_NULL(&buf_va_info->map.vaddr)) {
+			dma_buf_vunmap(dmabuf, &buf_va_info->map);
+			dma_buf_end_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
 
-		dma_buf_unmap_attachment(buf_va_info->attach, buf_va_info->sgt,
-			DMA_BIDIRECTIONAL);
+			dma_buf_unmap_attachment(buf_va_info->attach, buf_va_info->sgt,
+				DMA_BIDIRECTIONAL);
+		}
 		dma_buf_detach(dmabuf, buf_va_info->attach);
 		fd_info->fds_size[i] = dmabuf->size;
 		dma_buf_put(dmabuf);
@@ -1737,7 +1950,7 @@ static int mtkdip_ioc_add_iova(struct v4l2_subdev *subdev, void *arg)
 
 		dmabuf = dma_buf_get(kfd[i]);
 		if (IS_ERR(dmabuf))
-			continue;
+			return -ENOMEM;
 #ifdef IMG_MEM_G_ID_DEBUG
 		spin_lock(&dmabuf->name_lock);
 		if (!strncmp("IMG_MEM_G_ID", dmabuf->name, 12))
@@ -1749,7 +1962,7 @@ static int mtkdip_ioc_add_iova(struct v4l2_subdev *subdev, void *arg)
 		if (IS_ERR(attach)) {
 			dma_buf_put(dmabuf);
 			pr_info("dma_buf_attach fail fd:%d\n", kfd[i]);
-			continue;
+			return -ENOMEM;
 		}
 
 		sgt = dma_buf_map_attachment(attach, DMA_BIDIRECTIONAL);
@@ -1758,7 +1971,7 @@ static int mtkdip_ioc_add_iova(struct v4l2_subdev *subdev, void *arg)
 			dma_buf_put(dmabuf);
 			pr_info("%s:dma_buf_map_attachment sgt err: fd %d\n",
 						__func__, kfd[i]);
-			continue;
+			return -ENOMEM;
 		}
 
 		dma_addr = sg_dma_address(sgt->sgl);
@@ -1962,7 +2175,7 @@ static int mtkdip_ioc_del_fence(struct v4l2_subdev *subdev, void *arg)
 static int imgsys_send(struct platform_device *pdev, enum hcp_id id,
 		    void *buf, unsigned int  len, int req_fd, unsigned int wait)
 {
-	int ret;
+	int ret = 0;
 #if MTK_CM4_SUPPORT
 	ret = scp_ipi_send(imgsys_dev->scp_pdev, SCP_IPI_DIP, &ipi_param,
 			   sizeof(ipi_param), 0);
@@ -1972,7 +2185,7 @@ static int imgsys_send(struct platform_device *pdev, enum hcp_id id,
 	else
 		ret = mtk_hcp_send_async(pdev, id, buf, len, req_fd);
 #endif
-	return 0;
+	return ret;
 }
 #endif
 static int mtkdip_ioc_s_init_info(struct v4l2_subdev *subdev, void *arg)
@@ -2001,7 +2214,7 @@ static int mtkdip_ioc_alloc_buffer(struct v4l2_subdev *subdev, void *arg)
 	struct mem_info *info = (struct mem_info *)arg;
 	struct mtk_imgsys_pipe *pipe;
     struct img_init_info working_buf_info;
-    int ret;
+    int ret = 0;
 	struct resource *imgsys_resource;
 	struct buf_va_info_t *buf;
 	struct dma_buf *dbuf;
@@ -2099,7 +2312,7 @@ static int mtkdip_ioc_alloc_buffer(struct v4l2_subdev *subdev, void *arg)
 				pipe->imgsys_dev->imgsys_pipe[0].streaming_alloc,
 				pipe->imgsys_dev->imgsys_pipe[0].imgsys_user_count);
 
-	return 0;
+	return ret;
 }
 
 static int mtkdip_ioc_free_buffer(struct v4l2_subdev *subdev, void *arg)
@@ -2530,7 +2743,7 @@ static int mtk_imgsys_video_device_v4l2_register(struct mtk_imgsys_pipe *pipe,
 		dev_info(pipe->imgsys_dev->dev, "%s unsupported buf_type %x\n",
 						__func__, vdev->device_caps);
 
-	vbq->mem_ops = &vb2_dma_contig_memops;
+	vbq->mem_ops = &mtk_imgsys_dma_contig_memops;
 	vbq->supports_requests = true;
 	vbq->buf_struct_size = sizeof(struct mtk_imgsys_dev_buffer);
 	vbq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
@@ -2592,14 +2805,18 @@ static int mtk_imgsys_video_device_v4l2_register(struct mtk_imgsys_pipe *pipe,
 	dev_dbg(pipe->imgsys_dev->dev, "registered vdev: %s\n",
 		vdev->name);
 
-	if (V4L2_TYPE_IS_OUTPUT(node->desc->buf_type))
+	if (V4L2_TYPE_IS_OUTPUT(node->desc->buf_type)) {
+        //coverity[callee_ptr_arith : SUPPRESS]
 		ret = media_create_pad_link(&vdev->entity, 0,
 					    &pipe->subdev.entity,
 					    node->desc->id, node->flags);
-	else
+	}
+	else {
+        //coverity[callee_ptr_arith : SUPPRESS]
 		ret = media_create_pad_link(&pipe->subdev.entity,
 					    node->desc->id, &vdev->entity,
 					    0, node->flags);
+	}
 	if (ret)
 		goto err_video_unregister_device;
 
@@ -3369,6 +3586,19 @@ int mtk_imgsys_remove(struct platform_device *pdev)
 }
 EXPORT_SYMBOL(mtk_imgsys_remove);
 
+void mtk_imgsys_shutdown(struct platform_device *pdev)
+{
+	struct mtk_imgsys_dev *imgsys_dev = dev_get_drvdata(&pdev->dev);
+    struct mtk_imgsys_pipe *pipe = &imgsys_dev->imgsys_pipe[0];
+
+	dev_info(imgsys_dev->dev, "%s shutdown +\n", __func__);
+    if (pipe->streaming != 0) {
+        mtk_imgsys_hw_streamoff(pipe);
+    }
+    dev_info(imgsys_dev->dev, "%s shutdown -\n", __func__);
+}
+EXPORT_SYMBOL(mtk_imgsys_shutdown);
+
 int mtk_imgsys_runtime_suspend(struct device *dev)
 {
 	struct mtk_imgsys_dev *imgsys_dev = dev_get_drvdata(dev);
@@ -3438,6 +3668,7 @@ MODULE_DEVICE_TABLE(of, mtk_imgsys_of_match);
 static struct platform_driver mtk_imgsys_driver = {
 	.probe   = mtk_imgsys_probe,
 	.remove  = mtk_imgsys_remove,
+	.shutdown = NULL,
 	.driver  = {
 		.name = "camera-dip",
 		.owner	= THIS_MODULE,

@@ -3,8 +3,8 @@
  * Copyright (c) 2020 MediaTek Inc.
  */
 
-#ifndef __SENINF1_CSI2_H__
-#define __SENINF1_CSI2_H__
+#ifndef __SENINF1_CSI2_C_HEADER_H__
+#define __SENINF1_CSI2_C_HEADER_H__
 
 #define SENINF_CSI2_EN 0x0000
 #define RG_CSI2_PRBS_CHK_EN_SHIFT 0
@@ -227,6 +227,5 @@
 #define RO_CSI2_ISP_AFIFO_BIST_FAIL_MASK (0x1ff << 16)
 #define RO_CSI2_ISP_AFIFO_BIST_DONE_SHIFT 31
 #define RO_CSI2_ISP_AFIFO_BIST_DONE_MASK (0x1 << 31)
-
 
 #endif

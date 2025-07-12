@@ -55,7 +55,7 @@ MODULE_PARM_DESC(debug_disable_twin_dc_scen, "debug: disable twin dc scen");
 
 #define RAW_PIPELINE_NUM 3
 
-#define CAMSV_16P_ENABLE 0
+#define CAMSV_16P_ENABLE 1
 
 #define sizeof_u32(__struct__) ((sizeof(__struct__) + sizeof(u32) - 1)/ \
 				sizeof(u32))
@@ -88,7 +88,7 @@ static inline struct v4l2_rect fullsize_as_crop(unsigned int w, unsigned int h)
 	};
 }
 
-#define USE_CTRL_PIXEL_RATE 0
+#define USE_CTRL_PIXEL_RATE 1
 #define DC_MODE_VB_MARGIN 100
 
 static int res_calc_fill_sensor(struct mtk_cam_res_calc *c,
@@ -103,7 +103,10 @@ static int res_calc_fill_sensor(struct mtk_cam_res_calc *c,
 	interval = 1000000000L * interval_n / interval_d;
 
 #if USE_CTRL_PIXEL_RATE
-	c->mipi_pixel_rate = s->pixel_rate;
+	c->mipi_pixel_rate = s->pixel_rate ? s->pixel_rate :
+		(u64)(s->width + s->hblank)
+		* (s->height + s->vblank)
+		* interval_d / interval_n;
 #else
 	c->mipi_pixel_rate =
 		(u64)(s->width + s->hblank)
@@ -185,12 +188,27 @@ static int step_next_frontal_pixel_mode(struct raw_resource_stepper *stepper)
 
 typedef int (*step_fn_t)(struct raw_resource_stepper *stepper);
 
-static bool valid_resouce_set(struct raw_resource_stepper *s)
+static bool valid_resouce_set(struct raw_resource_stepper *s, bool enable_log)
 {
-	/* invalid sets */
+	/**
+	 * invalid sets
+	 * NOTE: allow the opp idx to be larger than the minimum one,
+	 * especially for 1 pixel mode, which can have a larger opp idx than 1.
+	 */
+
 	bool invalid =
+		GET_PLAT_HW(pixel_mode_max) == 2 ?
 		(s->pixel_mode == 1 && s->opp_idx != s->min_opp_idx) ||
-		(s->pixel_mode == 1 && s->num_raw > 1);
+		(s->pixel_mode == 1 && s->num_raw > 1) :
+		false;
+
+	if (invalid && enable_log)
+		pr_info("%s: opp_idx(m:%d c:%d) px(f:%d c:%d) num_raw(%d) clk(%u)\n",
+			__func__,
+			s->min_opp_idx, s->opp_idx,
+			s->frontal_pixel_mode, s->pixel_mode,
+			s->num_raw,
+			s->tbl[s->opp_idx].freq_hz);
 
 	return !invalid;
 }
@@ -207,7 +225,7 @@ static int loop_resource_till_valid(struct mtk_cam_res_calc *c,
 		bool pass;
 
 		i = 0;
-		if (valid_resouce_set(stepper)) {
+		if (valid_resouce_set(stepper, enable_log)) {
 			c->frontal_pixel_mode = stepper->frontal_pixel_mode;
 			c->raw_pixel_mode = stepper->pixel_mode;
 			c->raw_num = stepper->num_raw;
@@ -507,6 +525,11 @@ static void res_sensor_info_validate(
 	}
 }
 
+static inline int is_single_rawc(int raws)
+{
+	return raws == 0x4;
+}
+
 //Todo: move it to platfrom
 static bool frontal_pixmode_validate(struct mtk_cam_res_calc *c,
 				struct mtk_cam_resource_raw_v2 *r)
@@ -514,7 +537,7 @@ static bool frontal_pixmode_validate(struct mtk_cam_res_calc *c,
 	bool valid = true;
 
 	if (res_raw_is_dc_mode(r)) {
-		if (c->frontal_pixel_mode == 16 && r->raws == 0x4)
+		if (c->frontal_pixel_mode == 16 && is_single_rawc(r->raws))
 			return false;
 
 		r->camsv_pixel_mode = c->frontal_pixel_mode;
@@ -566,8 +589,12 @@ static int mtk_raw_slb_request_early(struct mtk_raw_pipeline *pipeline,
 	struct slbc_data *slb;
 	int ret;
 
-	if (WARN_ON(pipeline->early_request_slb_data))
-		return -1;
+	if (pipeline->early_request_slb_data) {
+		dev_info(dev, "%s: slb_data requested %s\n", __func__,
+			 pipeline->early_request_slb_data->uid == uid ?
+			 "" : "warn: uid differs!");
+		return 0;
+	}
 
 	slb = kmalloc(sizeof(*slb), GFP_KERNEL);
 	if (!slb) {
@@ -673,9 +700,11 @@ static int mtk_raw_calc_raw_resource(struct mtk_raw_pipeline *pipeline,
 
 CALC_RESOURCE:
 	memset(&stepper, 0, sizeof(stepper));
+
 	/* frontal pixel mode */
 #if CAMSV_16P_ENABLE
-	stepper.frontal_pixel_mode_max = res_raw_is_dc_mode(r) ? 16 : 8;
+	stepper.frontal_pixel_mode_max =
+		res_raw_is_dc_mode(r) && !is_single_rawc(r->raws) ? 16 : 8;
 #else
 	stepper.frontal_pixel_mode_max = 8;
 #endif
@@ -683,8 +712,12 @@ CALC_RESOURCE:
 
 	/* constraints */
 	/* always 2 pixel mode, beside sensor size <= 1920 */
-	stepper.pixel_mode_min = (s->width <= PIX_MODE_SIZE_CONSTRAIN) ? 1 : 2;
-	stepper.pixel_mode_max = 2;
+	if (GET_PLAT_HW(has_pixel_mode_contraints))
+		stepper.pixel_mode_min = (s->width <= PIX_MODE_SIZE_CONSTRAIN) ? 1 : 2;
+	else
+		stepper.pixel_mode_min = 1;
+
+	stepper.pixel_mode_max = GET_PLAT_HW(pixel_mode_max);
 
 	mtk_raw_calc_num_raw_max_min(r,
 				     &stepper.num_raw_min,
@@ -1283,7 +1316,9 @@ static int mtk_raw_sd_s_stream(struct v4l2_subdev *sd, int enable)
 	struct mtk_raw_pipeline *pipe =
 		container_of(sd, struct mtk_raw_pipeline, subdev);
 
-	dev_info(dev, "%s: %d\n", __func__, enable);
+	if (CAM_DEBUG_ENABLED(V4L2))
+		dev_info(dev, "%s: %d\n", __func__, enable);
+
 	if (enable) {
 		pipe->sensor = NULL;
 		pipe->seninf = mtk_cam_find_sensor_seninf(sd, MEDIA_ENT_F_VID_IF_BRIDGE);
@@ -3696,6 +3731,21 @@ static const struct v4l2_subdev_internal_ops mtk_raw_internal_ops = {
 	.close = mtk_raw_close,
 };
 
+static bool check_vb2_queue_support(u8 id, u8 *vb2_queue_support_list, int vb2_queue_support_list_num)
+{
+	int i;
+	u8 id_chk;
+
+	for (i = 0; i < vb2_queue_support_list_num; i++) {
+		id_chk = *(vb2_queue_support_list + i);
+
+		if (id_chk == id)
+			return true;
+	}
+
+	return false;
+}
+
 static int mtk_raw_pipeline_register(const char *str, unsigned int id,
 				     struct mtk_raw_pipeline *pipe,
 				     struct v4l2_device *v4l2_dev)
@@ -3704,6 +3754,8 @@ static int mtk_raw_pipeline_register(const char *str, unsigned int id,
 	struct mtk_cam_video_device *video;
 	int i;
 	int ret;
+	u8 *vb2_queue_support_list = GET_PLAT_V4L2(vb2_queues_support_list);
+	int vb2_queue_support_list_num = GET_PLAT_V4L2(vb2_queues_support_list_num);
 
 	pipe->id = id;
 
@@ -3741,6 +3793,10 @@ static int mtk_raw_pipeline_register(const char *str, unsigned int id,
 
 		video->uid.pipe_id = pipe->id;
 		video->uid.id = video->desc.dma_port;
+
+		if (!check_vb2_queue_support(video->desc.id, vb2_queue_support_list,
+					     vb2_queue_support_list_num))
+			continue;
 
 		ret = mtk_cam_video_register(video, v4l2_dev);
 		if (ret)

@@ -34,6 +34,7 @@ static const struct dev_pm_ops mtk_imgsys_pm_ops = {
 static const struct of_device_id mtk_imgsys_of_match[] = {
 	{ .compatible = "mediatek,imgsys-isp7sp-mt6897", .data = (void *)&imgsys_data_mt6897},
 	{ .compatible = "mediatek,imgsys-isp7sp-mt6989", .data = (void *)&imgsys_data_mt6989},
+	{ .compatible = "mediatek,imgsys-isp7sp-mt6878", .data = (void *)&imgsys_data_mt6878},
 	{}
 };
 MODULE_DEVICE_TABLE(of, mtk_imgsys_of_match);
@@ -41,6 +42,7 @@ MODULE_DEVICE_TABLE(of, mtk_imgsys_of_match);
 static struct platform_driver mtk_imgsys_driver = {
 	.probe   = mtk_imgsys_probe,
 	.remove  = mtk_imgsys_remove,
+	.shutdown = mtk_imgsys_shutdown,
 	.driver  = {
 		.name = "imgisp7sp",
 		.owner	= THIS_MODULE,

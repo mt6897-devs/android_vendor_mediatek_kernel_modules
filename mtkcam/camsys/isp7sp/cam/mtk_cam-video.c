@@ -46,14 +46,14 @@ static void log_fmt_ops(struct mtk_cam_video_device *node,
 	    f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		struct v4l2_pix_format_mplane *pix_mp = &f->fmt.pix_mp;
 
-		log_fmt_mp(remote_pad->entity->name, pix_mp, caller);
+		log_fmt_mp(remote_name, pix_mp, caller);
 
 	} else if (f->type == V4L2_BUF_TYPE_META_CAPTURE ||
 		   f->type == V4L2_BUF_TYPE_META_OUTPUT) {
 		struct v4l2_meta_format *meta = &f->fmt.meta;
 
 		pr_info("%s: %s node %s: meta (format " FMT_FOURCC " size %u)\n",
-			caller, remote_pad->entity->name, node->desc.name,
+			caller, remote_name, node->desc.name,
 			MEMBER_FOURCC(meta->dataformat), meta->buffersize);
 	} else {
 		pr_info("%s: not-supported yet type %d\n", __func__, f->type);
@@ -343,8 +343,10 @@ static int refine_valid_selection(struct mtk_cam_video_device *node,
 		int sink_w, sink_h;
 
 		remote_pad = media_pad_remote_pad_unique(&node->pad);
-		if (WARN_ON_ONCE(IS_ERR_OR_NULL(remote_pad)))
+		if (IS_ERR_OR_NULL(remote_pad)) {
+			pr_info("%s: remote pad is null\n", __func__);
 			return -1;
+		}
 
 		if (CAM_DEBUG_ENABLED(V4L2))
 			pr_info("%s: remote %s node %s: sel (%d,%d %ux%u)\n",
@@ -1201,9 +1203,11 @@ int mtk_cam_vidioc_g_meta_fmt(struct file *file, void *fh,
 	case MTK_RAW_META_SV_OUT_2:
 		node->active_fmt.fmt.meta.buffersize =
 				CAMSV_EXT_META_0_WIDTH * CAMSV_EXT_META_0_HEIGHT;
-		dev_dbg(cam->dev,
-			"%s:extmeta name:%s buffersize:%d\n",
-			__func__, node->desc.name, node->active_fmt.fmt.meta.buffersize);
+
+		if (CAM_DEBUG_ENABLED(V4L2))
+			dev_info(cam->dev,
+				"%s:extmeta name:%s buffersize:%d\n",
+				__func__, node->desc.name, node->active_fmt.fmt.meta.buffersize);
 		break;
 	default:
 		break;
@@ -1211,9 +1215,11 @@ int mtk_cam_vidioc_g_meta_fmt(struct file *file, void *fh,
 
 	f->fmt.meta.dataformat = node->active_fmt.fmt.meta.dataformat;
 	f->fmt.meta.buffersize = node->active_fmt.fmt.meta.buffersize;
-	dev_dbg(cam->dev,
-		"%s: node:%s dataformat:%d buffersize:%d\n",
-		__func__, node->desc.name, f->fmt.meta.dataformat, f->fmt.meta.buffersize);
+
+	if (CAM_DEBUG_ENABLED(V4L2))
+		dev_info(cam->dev,
+			"%s: node:%s dataformat:%d buffersize:%d\n",
+			__func__, node->desc.name, f->fmt.meta.dataformat, f->fmt.meta.buffersize);
 
 	if (CAM_DEBUG_ENABLED(V4L2))
 		log_fmt_ops(node, f, __func__);

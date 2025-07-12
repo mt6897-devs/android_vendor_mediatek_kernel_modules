@@ -119,7 +119,7 @@ struct mtk_ae_debug_data {
 };
 
 /* CQ setting */
-void initialize(struct mtk_raw_device *dev, int is_slave, int is_srt,
+void initialize(struct mtk_raw_device *dev, int is_slave, int is_srt, int is_slb,
 		struct engine_callback *cb);
 void subsample_enable(struct mtk_raw_device *dev, int ratio);
 void stagger_enable(struct mtk_raw_device *dev, bool is_dc);
@@ -134,6 +134,7 @@ void apply_cq(struct mtk_raw_device *dev,
 void dbload_force(struct mtk_raw_device *dev);
 void toggle_db(struct mtk_raw_device *dev);
 void enable_tg_db(struct mtk_raw_device *dev, int en);
+
 /* fbc */
 void rwfbc_inc_setup(struct mtk_raw_device *dev);
 
@@ -153,9 +154,11 @@ void write_pkt_trigger_apu_frame_mode(struct mtk_raw_device *dev,
 				      struct cmdq_pkt *pkt);
 
 void raw_dump_debug_status(struct mtk_raw_device *dev, bool is_srt);
+void raw_dump_dma_status(struct mtk_raw_device *dev);
 
 /* reset */
 void reset(struct mtk_raw_device *dev);
+void adlrd_reset(struct mtk_cam_device *dev);
 
 /* iommu debug */
 int mtk_raw_translation_fault_cb(int port, dma_addr_t mva, void *data);

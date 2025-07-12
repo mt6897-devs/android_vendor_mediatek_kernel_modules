@@ -21,6 +21,12 @@ subdir-ccflags-y += -D__XIAOMI_CAMERA__
 ifeq ($(CONFIG_BUILD_XIAOMI_CAMERA_IMAGE_NAMES),"duchamp")
 subdir-ccflags-y += -DDUCHAMP_CAM
 endif
+ifeq ($(CONFIG_BUILD_XIAOMI_CAMERA_IMAGE_NAMES),"rothko")
+subdir-ccflags-y += -DROTHKO_CAM
+endif
+ifeq ($(CONFIG_BUILD_XIAOMI_CAMERA_IMAGE_NAMES),"degas")
+subdir-ccflags-y += -DDEGAS_CAM
+endif
 # XIAOMI END
 
 # Common code

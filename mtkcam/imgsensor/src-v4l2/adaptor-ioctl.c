@@ -551,8 +551,8 @@ static int g_crop_by_scenario(struct adaptor_ctx *ctx, void *arg)
 static int g_vcinfo_by_scenario(struct adaptor_ctx *ctx, void *arg)
 {
 	struct mtk_vcinfo_by_scenario *info = arg;
-	MSDK_SENSOR_INFO_STRUCT sinfo;
-	MSDK_SENSOR_CONFIG_STRUCT config;
+	MSDK_SENSOR_INFO_STRUCT *sinfo = NULL;
+	MSDK_SENSOR_CONFIG_STRUCT *config = NULL;
 	struct SENSOR_VC_INFO2_STRUCT *vcinfo2 = NULL;
 
 #ifdef IMGSENSOR_VC_ROUTING
@@ -566,17 +566,22 @@ static int g_vcinfo_by_scenario(struct adaptor_ctx *ctx, void *arg)
 	para.u64[0] = info->scenario_id;
 #endif
 
-	memset(&sinfo, 0, sizeof(sinfo));
-	memset(&config, 0, sizeof(config));
+	sinfo = kmalloc(sizeof(MSDK_SENSOR_INFO_STRUCT), GFP_KERNEL);
+	config = kmalloc(sizeof(MSDK_SENSOR_CONFIG_STRUCT), GFP_KERNEL);
 	vcinfo2 = kmalloc(sizeof(struct SENSOR_VC_INFO2_STRUCT), GFP_KERNEL);
-	if (unlikely(vcinfo2 == NULL)) {
-		adaptor_logi(ctx, "[%s] kmalloc fail\n", __func__);
-		return -ENOIOCTLCMD;
-	} else {
-		memset(vcinfo2, 0, sizeof(struct SENSOR_VC_INFO2_STRUCT));
-	}
 
-	subdrv_call(ctx, get_info, info->scenario_id, &sinfo, &config);
+	if (unlikely(sinfo == NULL) || unlikely(config == NULL) || unlikely(vcinfo2 == NULL)) {
+		adaptor_logi(ctx, "[%s] kmalloc fail\n", __func__);
+		kfree(sinfo);
+		kfree(config);
+		kfree(vcinfo2);
+		return -ENOIOCTLCMD;
+	}
+	memset(sinfo, 0, sizeof(MSDK_SENSOR_INFO_STRUCT));
+	memset(config, 0, sizeof(MSDK_SENSOR_CONFIG_STRUCT));
+	memset(vcinfo2, 0, sizeof(struct SENSOR_VC_INFO2_STRUCT));
+
+	subdrv_call(ctx, get_info, info->scenario_id, sinfo, config);
 
 #ifdef IMGSENSOR_VC_ROUTING
 	subdrv_call(ctx, get_frame_desc, info->scenario_id, &fd);
@@ -599,8 +604,11 @@ static int g_vcinfo_by_scenario(struct adaptor_ctx *ctx, void *arg)
 	}
 #endif
 
-	vcinfo2_fill_output_format(vcinfo2, sinfo.SensorOutputDataFormat);
+	vcinfo2_fill_output_format(vcinfo2, sinfo->SensorOutputDataFormat);
 	vcinfo2_fill_pad(vcinfo2);
+
+	kfree(sinfo);
+	kfree(config);
 
 	if (copy_to_user((void *)info->p_vcinfo, vcinfo2, sizeof(struct SENSOR_VC_INFO2_STRUCT))) {
 		kfree(vcinfo2);
@@ -1016,8 +1024,10 @@ static int g_preload_eeprom_data(struct adaptor_ctx *ctx, void *arg)
 
 	para.u32[0] = 0;
 
+	adaptor_logi(ctx, "[%s] +\n", __func__);
 	subdrv_call(ctx, feature_control,
 		SENSOR_FEATURE_PRELOAD_EEPROM_DATA, para.u8, &len);
+	adaptor_logi(ctx, "[%s] -\n", __func__);
 
 	*info = para.u32[0];
 
@@ -1725,6 +1735,27 @@ static int g_multi_exp_shutter_range_by_scenario(struct adaptor_ctx *ctx, void *
 	return 0;
 }
 
+static int g_dcg_ratio_group_by_scenario(struct adaptor_ctx *ctx, void *arg)
+{
+	struct mtk_dcg_ratio_group_by_scenario *info = arg;
+	u32 dcg_ratio_group[5];
+	union feature_para para;
+	u32 len;
+
+	memset(&dcg_ratio_group, 0, sizeof(dcg_ratio_group));
+	para.u64[0] = info->scenario_id;
+	para.u64[1] = (uintptr_t)dcg_ratio_group;
+
+	subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_GET_DCG_RATIO_GROUP_BY_SCENARIO,
+		para.u8, &len);
+
+	if (copy_to_user(info->dcg_ratio_group,
+			dcg_ratio_group, sizeof(dcg_ratio_group)))
+		return -EFAULT;
+	return 0;
+}
+
 struct ioctl_entry {
 	unsigned int cmd;
 	int (*func)(struct adaptor_ctx *ctx, void *arg);
@@ -1782,6 +1813,7 @@ static const struct ioctl_entry ioctl_list[] = {
 	{VIDIOC_MTK_G_DCG_TYPE_BY_SCENARIO, g_dcg_type_by_scenario},
 	{VIDIOC_MTK_G_MULTI_EXP_GAIN_RANGE_BY_SCENARIO, g_multi_exp_gain_range_by_scenario},
 	{VIDIOC_MTK_G_MULTI_EXP_SHUTTER_RANGE_BY_SCENARIO, g_multi_exp_shutter_range_by_scenario},
+	{VIDIOC_MTK_G_DCG_RATIO_GROUP_BY_SCENARIO, g_dcg_ratio_group_by_scenario},
 	/* SET */
 	{VIDIOC_MTK_S_VIDEO_FRAMERATE, s_video_framerate},
 	{VIDIOC_MTK_S_MAX_FPS_BY_SCENARIO, s_max_fps_by_scenario},

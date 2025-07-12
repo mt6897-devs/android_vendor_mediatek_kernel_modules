@@ -239,7 +239,10 @@ do {								\
 #define POSE_LOOP_NUM 3
 #define FLD_MAX_OUT 1680
 
-#define MAX_DEBUG_TIMEVAL 7
+#define MAX_DEBUG_TIMEVAL 8
+
+/* 780ms */
+#define AIE_POLL_TIME_INFINI	(0xFFFF)
 
 extern struct mtk_aie_user_para g_user_param;
 
@@ -647,7 +650,6 @@ struct mtk_aie_dev {
 	u32 fdvt_sec_wait;
 	u32 fd_stream_count;
 	struct completion fd_job_finished;
-	struct delayed_work job_timeout_work;
 
 	struct aie_enq_info *aie_cfg;
 	struct aie_reg_cfg reg_cfg;
@@ -736,6 +738,12 @@ struct mtk_aie_dev {
 
 	/* time for debug */
 	long long tv[MAX_DEBUG_TIMEVAL];
+	bool is_cmdq_polling;
+	bool is_shutdown;
+	unsigned int aie_cmdq_event;
+
+	struct cmdq_pkt *pkt;
+	bool isHwHang;
 };
 
 struct mtk_aie_ctx {

@@ -28,6 +28,13 @@
 #define MAX_MUX_VCINFO_DEBUG 15
 #define MAX_TS_SIZE 4
 
+/* define cam mux src sel  idle value */
+#define IDLE_SRC_SEL 0x7f
+
+/*ULPS-mode support*/
+#undef CDPHY_ULPS_MODE_SUPPORT
+//#define CDPHY_ULPS_MODE_SUPPORT
+
 /*init deskew define*/
 #define INIT_DESKEW_SUPPORT
 //#define INIT_DESKEW_UT
@@ -230,6 +237,7 @@ struct mtk_cam_seninf_ops {
 	int (*_debug_init_deskew_begin_end_apply_code)(struct seninf_ctx *ctx);
 	int (*_debug_current_status)(struct seninf_ctx *ctx);
 	int (*_set_csi_afifo_pop)(struct seninf_ctx *ctx);
+	int (*_get_csi_irq_status)(struct seninf_ctx *ctx);
 	unsigned int seninf_num;
 	unsigned int mux_num;
 	unsigned int cam_mux_num;

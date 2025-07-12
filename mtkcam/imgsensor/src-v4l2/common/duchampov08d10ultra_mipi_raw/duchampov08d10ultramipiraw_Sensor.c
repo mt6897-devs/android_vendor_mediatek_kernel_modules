@@ -201,8 +201,12 @@ static struct SENSOR_WINSIZE_INFO_STRUCT imgsensor_winsize_info[] = {
 	{3264, 2448,   0, 304, 3264, 1840, 1632,  920, 0000, 0000, 1632,  920, 0, 0, 1632,  920}, /*custom 1*/
 	{3264, 2448, 192, 144, 2880, 2160, 2880, 2160, 0000, 0000, 2880, 2160, 0, 0, 2880, 2160}, /*custom 2*/
 };
+
+static bool streaming_status = false;
 static bool soft_power_status = false; //false = soft power down, true = soft power up
 static void soft_power_up(struct subdrv_ctx *ctx);
+static bool blc_trigger_flag = false; // true = need to write p7 0x00 0xf8
+
 
 static void set_dummy(struct subdrv_ctx *ctx)
 {
@@ -225,7 +229,8 @@ static void set_dummy(struct subdrv_ctx *ctx)
 	write_cmos_sensor_8(ctx, 0xfd, 0x01);
 	write_cmos_sensor_8(ctx, 0x05, ctx->dummy_line >> 8);
 	write_cmos_sensor_8(ctx, 0x06, ctx->dummy_line & 0xff);
-	write_cmos_sensor_8(ctx, 0x01, 0x01);
+	if(streaming_status)
+		write_cmos_sensor_8(ctx, 0x01, 0x01);
 
 	/* update FL RG value after setting buffer for writting RG */
 	ctx->frame_length_rg = ctx->frame_length;
@@ -301,7 +306,8 @@ static void write_shutter(struct subdrv_ctx *ctx, kal_uint32 shutter)
 	write_cmos_sensor_8(ctx, 0x02, (shutter*2 >> 16) & 0xff);
 	write_cmos_sensor_8(ctx, 0x03, (shutter*2 >> 8) & 0xff);
 	write_cmos_sensor_8(ctx, 0x04,  shutter*2  & 0xff);
-	write_cmos_sensor_8(ctx, 0x01, 0x01);
+	if(streaming_status)
+		write_cmos_sensor_8(ctx, 0x01, 0x01);
 
 	OV08D10_LOG_INF("shutter = %d, framelength = %d\n", shutter, ctx->frame_length);
 }	/*	write_shutter  */
@@ -489,7 +495,8 @@ static kal_uint16 set_gain(struct subdrv_ctx *ctx, kal_uint16 gain)
 	write_cmos_sensor_8(ctx,0x24, reg_gain);
 	write_cmos_sensor_8(ctx,0x21, 0x02);
 	write_cmos_sensor_8(ctx,0x22, 0x00);//1x digital gain
-	write_cmos_sensor_8(ctx,0x01, 0x01);
+	if(streaming_status)
+		write_cmos_sensor_8(ctx, 0x01, 0x01);
 
 	return gain;
 } /* set_gain */
@@ -575,7 +582,9 @@ static kal_uint32 streaming_control(struct subdrv_ctx *ctx, kal_bool enable)
 		write_cmos_sensor_8(ctx, 0xe7, 0x03);
 		write_cmos_sensor_8(ctx, 0xe7, 0x00);
 		write_cmos_sensor_8(ctx, 0xa0, 0x01);
+		streaming_status = true;
 		soft_power_status = true;
+		blc_trigger_flag = true;
 	} else {
 		write_cmos_sensor_8(ctx, 0xfd, 0x00);
 		write_cmos_sensor_8(ctx, 0xa0, 0x00);
@@ -583,7 +592,9 @@ static kal_uint32 streaming_control(struct subdrv_ctx *ctx, kal_bool enable)
 		write_cmos_sensor_8(ctx, 0x20, 0x0b);
 		write_cmos_sensor_8(ctx, 0xc2, 0x32);
 		write_cmos_sensor_8(ctx, 0x21, 0x0f);
+		streaming_status = false;
 		soft_power_status = false;
+		blc_trigger_flag = false;
 	}
 	mdelay(10);
 
@@ -1209,6 +1220,7 @@ static int get_info(struct subdrv_ctx *ctx,
 		sensor_info->gain_ratio[i] = 1000;
 		sensor_info->OB_pedestals[i] = imgsensor_info.ob_pedestal;
 		sensor_info->saturation_level[i] = 1023;
+		sensor_info->max_framelength[i] = imgsensor_info.max_frame_length;
 	}
 
 	return ERROR_NONE;
@@ -2202,6 +2214,7 @@ static void static_ctx_init(struct subdrv_ctx *ctx)
 	ctx->s_ctx.ana_gain_max = ctx->ana_gain_max;
 	ctx->s_ctx.exposure_min = ctx->exposure_min;
 	ctx->s_ctx.exposure_max = ctx->exposure_max;
+	ctx->s_ctx.frame_length_max = ctx->max_frame_length;
 
 	//copy from subdrv_ctx_init
 	for (i = 0; i < ctx->s_ctx.sensor_mode_num ; i++) {
@@ -2284,6 +2297,18 @@ static int get_csi_param(struct subdrv_ctx *ctx,
 static int vsync_notify(struct subdrv_ctx *ctx, unsigned int sof_cnt)
 {
 	OV08D10_LOG_INF("sensormode(%d) sof_cnt(%d)\n", ctx->sensor_mode, sof_cnt);
+	if( blc_trigger_flag && sof_cnt > 1){
+		mdelay(10); //在sensor出帧期间，写BLC寄存器是安全的。 sof信号 到sensor开始出帧，还有一段时间，所以延时10ms
+		write_cmos_sensor_8(ctx, 0xfd, 0x07);
+		if(ctx->sensor_mode == IMGSENSOR_MODE_PREVIEW){
+			write_cmos_sensor_8(ctx, 0x00, 0x98);
+			OV08D10_LOG_INF("reset BLC trigger 0x98");
+		} else {
+			write_cmos_sensor_8(ctx, 0x00, 0xf8);
+			OV08D10_LOG_INF("reset BLC trigger 0xf8");
+		}
+		blc_trigger_flag = false;
+	}
 	return 0;
 };
 

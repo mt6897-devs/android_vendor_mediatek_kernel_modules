@@ -65,7 +65,7 @@ static void reqfd_cbinfo_put_work(struct reqfd_cbinfo_t *work);
 static int imgsys_send(struct platform_device *pdev, enum hcp_id id,
 		    void *buf, unsigned int  len, int req_fd, unsigned int wait)
 {
-	int ret;
+	int ret = 0;
 #if MTK_CM4_SUPPORT
 	ret = scp_ipi_send(imgsys_dev->scp_pdev, SCP_IPI_DIP, &ipi_param,
 			   sizeof(ipi_param), 0);
@@ -75,7 +75,7 @@ static int imgsys_send(struct platform_device *pdev, enum hcp_id id,
 	else
 		ret = mtk_hcp_send_async(pdev, id, buf, len, req_fd);
 #endif
-	return 0;
+	return ret;
 }
 
 static void imgsys_init_handler(void *data, unsigned int len, void *priv)
@@ -656,6 +656,7 @@ release_req:
 			queue_work(req->imgsys_pipe->imgsys_dev->mdpcb_wq,
 				&swork->work);
 		} else {
+		    pr_info("imgsys_fw-cmdq work pending not handle");
             media_request_put(&req->req);
 #if SMVR_DECOUPLE
 		if (swork->is_capture) {
@@ -1969,6 +1970,12 @@ unsigned int mode = imgsys_streaming;
     struct mtk_imgsys_req_fd_list *fd_list = &imgsys_dev->req_fd_cache;
 	u32	req_fd = 0;
 #endif
+    pipe = &imgsys_dev->imgsys_pipe[0];
+
+    if (!pipe->streaming) {
+        dev_info(imgsys_dev->dev, "imgsys already streaming off");
+        return;
+    }
 
 	if (!data) {
 		WARN_ONCE(!data, "%s: failed due to NULL data\n", __func__);
@@ -2921,7 +2928,7 @@ static int mtk_imgsys_worker_hcp_init(struct mtk_imgsys_dev *imgsys_dev)
         if (imgsys_dbg_enable())
 			dev_dbg(imgsys_dev->dev, "%s: send SCP_IPI_DIP_FRAME failed %d\n",
 				__func__, ret);
-		return -1;
+		return ret;
 		//goto err_power_off;
 	}
 
@@ -2934,7 +2941,7 @@ static int mtk_imgsys_worker_hcp_init(struct mtk_imgsys_dev *imgsys_dev)
 	if (ret) {
 		dev_info(imgsys_dev->dev, "%s: gce work pool allocate failed %d\n",
 			__func__, ret);
-		return -1;
+		return ret;
 		//goto err_power_off;
 	}
 
@@ -2942,7 +2949,7 @@ static int mtk_imgsys_worker_hcp_init(struct mtk_imgsys_dev *imgsys_dev)
 	if (ret) {
 		dev_info(imgsys_dev->dev, "%s: reqafd cbinfo work pool allocate failed %d\n",
 			__func__, ret);
-		return -1;
+		return ret;
 		//goto err_power_off;
 	}
 
@@ -3014,6 +3021,35 @@ err_power_off:
 			"%s: imgsys_quick_onoff_enable(%d)\n",
 			__func__, imgsys_quick_onoff_enable());
 
+    #if SMVR_DECOUPLE
+    imgsys_dev->imgsys_pipe[0].imgsys_user_count = 0;
+	ret = mtk_hcp_release_gce_working_buffer(imgsys_dev->scp_pdev);
+	if (imgsys_dev->imgsys_pipe[0].capture_alloc != 0) {
+	    ret = mtk_hcp_ioc_release_working_buffer(imgsys_dev->scp_pdev, imgsys_capture);
+	    imgsys_dev->imgsys_pipe[0].capture_alloc = 0;
+	}
+	if (imgsys_dev->imgsys_pipe[0].streaming_alloc != 0) {
+	    ret = mtk_hcp_ioc_release_working_buffer(imgsys_dev->scp_pdev, imgsys_streaming);
+	    imgsys_dev->imgsys_pipe[0].streaming_alloc = 0;
+	}
+	if (imgsys_dev->imgsys_pipe[0].smvr_alloc != 0) {
+	    ret = mtk_hcp_ioc_release_working_buffer(imgsys_dev->scp_pdev, imgsys_smvr);
+	    imgsys_dev->imgsys_pipe[0].smvr_alloc = 0;
+	}
+
+#else
+	ret = mtk_hcp_release_working_buffer(imgsys_dev->scp_pdev);
+#endif
+	if (ret) {
+		dev_info(imgsys_dev->dev,
+			"%s: mtk_hcp_release_working_buffer failed(%d)\n",
+			__func__, ret);
+	}
+    mtk_hcp_purge_msg(imgsys_dev->scp_pdev);
+
+	mutex_destroy(&imgsys_dev->req_fd_cache.lock);
+	//work_pool_uninit(&imgsys_dev->gwork_pool);
+	//work_pool_uninit(&imgsys_dev->reqfd_cbinfo_pool);
 	mtk_imgsys_mod_put(imgsys_dev);
 
 	user_cnt = atomic_read(&imgsys_dev->imgsys_user_cnt);
@@ -3158,53 +3194,54 @@ int mtk_imgsys_hw_streamoff(struct mtk_imgsys_pipe *pipe)
 	/* struct mtk_imgsys_dma_buf_iova_get_info *iova_info, *tmp; */
 	int ret;
 
-    if (imgsys_dbg_enable())
-	dev_dbg(imgsys_dev->dev,
-		"%s:%s: streamoff, removing all running jobs\n",
-		__func__, pipe->desc->name);
+	if (pipe->streaming != 0) {
+    	if (imgsys_dbg_enable())
+		dev_dbg(imgsys_dev->dev,
+			"%s:%s: streamoff, removing all running jobs\n",
+			__func__, pipe->desc->name);
 
-	pipe->streaming = 0;
+		pipe->streaming = 0;
 
-	ret = mtk_imgsys_hw_flush_pipe_jobs(pipe);
-	if (ret != 0) {
-		dev_info(imgsys_dev->dev,
-			"%s:%s: mtk_imgsys_hw_flush_pipe_jobs, ret(%d)\n",
-			__func__, pipe->desc->name, ret);
+		ret = mtk_imgsys_hw_flush_pipe_jobs(pipe);
+		if (ret != 0) {
+			dev_info(imgsys_dev->dev,
+				"%s:%s: mtk_imgsys_hw_flush_pipe_jobs, ret(%d)\n",
+				__func__, pipe->desc->name, ret);
+		}
+
+		/* Check all daemon releasing flow are done */
+		ret = wait_event_interruptible_timeout(
+				frm_info_waitq, info_list_is_empty(&frm_info_list),
+				msecs_to_jiffies(3000));
+		if (ret == 0) {
+			dev_info(imgsys_dev->dev, "%s timeout still with frm list\n",
+				__func__);
+			return -EIO;
+		} else if (-ERESTARTSYS == ret) {
+			dev_info(imgsys_dev->dev, "%s wait for done  interrupted !\n",
+				__func__);
+			return -ERESTARTSYS;
+		}
+
+		/* Stop the hardware if there is no streaming pipe */
+		mutex_lock(&imgsys_dev->hw_op_lock);
+		imgsys_dev->imgsys_stream_cnt--;
+		if (!imgsys_dev->imgsys_stream_cnt) {
+			mtk_imgsys_hw_disconnect(imgsys_dev);
+
+			dev_info(imgsys_dev->dev, "%s: dip_hw disconnected, stream cnt(%d)\n",
+				__func__, imgsys_dev->imgsys_stream_cnt);
+
+			flush_fd_kva_list(imgsys_dev);
+		}
+    	if (imgsys_dbg_enable())
+		dev_dbg(pipe->imgsys_dev->dev,
+			"%s:%s: stopped stream id(%d), stream cnt(%d)\n",
+			__func__, pipe->desc->name, pipe->desc->id,
+						imgsys_dev->imgsys_stream_cnt);
+
+		mutex_unlock(&imgsys_dev->hw_op_lock);
 	}
-
-	/* Check all daemon releasing flow are done */
-	ret = wait_event_interruptible_timeout(
-			frm_info_waitq, info_list_is_empty(&frm_info_list),
-			msecs_to_jiffies(3000));
-	if (ret == 0) {
-		dev_info(imgsys_dev->dev, "%s timeout still with frm list\n",
-			__func__);
-		return -EIO;
-	} else if (-ERESTARTSYS == ret) {
-		dev_info(imgsys_dev->dev, "%s wait for done  interrupted !\n",
-			__func__);
-		return -ERESTARTSYS;
-	}
-
-	/* Stop the hardware if there is no streaming pipe */
-	mutex_lock(&imgsys_dev->hw_op_lock);
-	imgsys_dev->imgsys_stream_cnt--;
-	if (!imgsys_dev->imgsys_stream_cnt) {
-		mtk_imgsys_hw_disconnect(imgsys_dev);
-
-		dev_info(imgsys_dev->dev, "%s: dip_hw disconnected, stream cnt(%d)\n",
-			__func__, imgsys_dev->imgsys_stream_cnt);
-
-		flush_fd_kva_list(imgsys_dev);
-	}
-    if (imgsys_dbg_enable())
-	dev_dbg(pipe->imgsys_dev->dev,
-		"%s:%s: stopped stream id(%d), stream cnt(%d)\n",
-		__func__, pipe->desc->name, pipe->desc->id,
-					imgsys_dev->imgsys_stream_cnt);
-
-	mutex_unlock(&imgsys_dev->hw_op_lock);
-
 	return 0;
 }
 

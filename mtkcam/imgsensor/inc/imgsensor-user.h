@@ -214,6 +214,10 @@ struct mtk_hdr_ae {
 	__u32 actions;
 	__u32 subsample_tags;
 	int req_id;
+#ifdef __XIAOMI_CAMERA__
+	__u32 blanking_enable;
+	__u32 addBlankingTime;
+#endif
 };
 
 struct mtk_seamless_switch_param {
@@ -409,12 +413,17 @@ struct mtk_csi_param {
 	__u32 dphy_csi2_resync_dmy_cycle;
 	__u8 not_fixed_dphy_settle;
 	__u8 dphy_init_deskew_support;
+	__u8 cphy_lrte_support;
 };
 
 struct mtk_sensor_saturation_info {
 	__u32 gain_ratio;
 	__u32 OB_pedestal;
 	__u32 saturation_level;
+	/* The merged raw by the dcg sensor merging mode is merged from several bits of raws */
+	__u32 adc_bit;
+	/* The OB value before merging */
+	__u32 ob_bm;
 };
 
 struct mtk_n_1_mode {
@@ -568,6 +577,11 @@ struct mtk_sensor_vc_info_by_scenario {
 	struct mtk_mbus_frame_desc fd;
 };
 
+struct mtk_dcg_ratio_group_by_scenario {
+	__u32 scenario_id;
+	__u32 *dcg_ratio_group;
+};
+
 /* GET */
 
 #define VIDIOC_MTK_G_DEF_FPS_BY_SCENARIO \
@@ -713,6 +727,9 @@ struct mtk_sensor_vc_info_by_scenario {
 
 #define VIDIOC_MTK_G_MULTI_EXP_SHUTTER_RANGE_BY_SCENARIO \
 	_IOWR('M', BASE_VIDIOC_PRIVATE + 50, struct mtk_multi_exp_shutter_range_by_scenario)
+
+#define VIDIOC_MTK_G_DCG_RATIO_GROUP_BY_SCENARIO \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 51, struct mtk_dcg_ratio_group_by_scenario)
 /* SET */
 
 #define VIDIOC_MTK_S_VIDEO_FRAMERATE \
@@ -754,6 +771,11 @@ struct mtk_sensor_vc_info_by_scenario {
 #ifdef __XIAOMI_CAMERA__
 #define VIDIOC_XIAOMI_S_LOCK_SETTING_WORK_QUEUE \
 	_IOW('M', BASE_VIDIOC_PRIVATE + 300, __u32)
+#endif
+
+#ifdef __XIAOMI_CAMERA__
+#define VIDIOC_XIAOMI_S_SET_BLANKING_TIME \
+	_IOW('M', BASE_VIDIOC_PRIVATE + 303,  struct mtk_sensor_value)
 #endif
 
 #endif

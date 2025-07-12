@@ -1197,8 +1197,15 @@ static struct subdrv_static_ctx static_ctx = {
 	.eeprom_num = ARRAY_SIZE(eeprom_info),
 	.resolution = {6560, 4928},
 	.mirror = IMAGE_HV_MIRROR,
-
+#ifdef AOV_EINT_UT
+#ifdef AOV_IMX809_EINT_UT
 	.mclk = 26,
+#else
+	.mclk = 24,
+#endif
+#else
+	.mclk = 26,
+#endif
 	.isp_driving_current = ISP_DRIVING_6MA,
 	.sensor_interface_type = SENSOR_INTERFACE_TYPE_MIPI,
 	.mipi_sensor_type = MIPI_OPHY_NCSI2,
@@ -1243,7 +1250,12 @@ static struct subdrv_static_ctx static_ctx = {
 	.s_streaming_control = set_streaming_control,
 
 	.reg_addr_stream = 0x0100,
+#ifdef AOV_EINT_UT
+	.reg_addr_mirror_flip = PARAM_UNDEFINED,
+#else
 	.reg_addr_mirror_flip = 0x0101,
+#endif
+
 	.reg_addr_exposure = {
 			{0x0202, 0x0203},
 			{0x0224, 0x0225},
@@ -1298,7 +1310,15 @@ static struct subdrv_ops ops = {
 static struct subdrv_pw_seq_entry pw_seq[] = {
 	{HW_ID_SCL, 0, 0},	/* default i2c bus scl 4 on apmcu side */
 	{HW_ID_SDA, 0, 0},	/* default i2c bus sda 4 on apmcu side */
+#ifdef AOV_EINT_UT
+#ifdef AOV_IMX809_EINT_UT
 	{HW_ID_MCLK1, 26, 0},
+#else
+	{HW_ID_MCLK1, 24, 0},
+#endif
+#else
+	{HW_ID_MCLK1, 26, 0},
+#endif
 	{HW_ID_PONV, 0, 1},
 	{HW_ID_RST1, 0, 1},
 	{HW_ID_AVDD, 2900000, 1}, // pmic_ldo for avdd
@@ -1306,7 +1326,11 @@ static struct subdrv_pw_seq_entry pw_seq[] = {
 	{HW_ID_DOVDD, 1800000, 1}, // pmic_ldo/gpio(1.8V ldo) for dovdd
 	{HW_ID_DVDD2, 855000, 1}, // pmic_ldo for dvdd
 	{HW_ID_MCLK1_DRIVING_CURRENT, 6, 1},
+#ifdef AOV_EINT_UT
+	{HW_ID_PONV, 0, 1},
+#else
 	{HW_ID_PONV, 1, 1},
+#endif
 	{HW_ID_RST1, 1, 4}
 };
 
@@ -1516,9 +1540,11 @@ static int get_csi_param(struct subdrv_ctx *ctx,
 				csi_param->dphy_csi2_resync_dmy_cycle = 0x15;
 			} else if (!strcasecmp(ctx->aov_phy_ctrl_ver,
 				MT6989_PHY_CTRL_VERSIONS)) {
-				csi_param->dphy_data_settle = 0x10;
-				csi_param->dphy_clk_settle = 0x10;
-				csi_param->dphy_trail = 0x10;
+				csi_param->not_fixed_trail_settle = 0;
+				csi_param->not_fixed_dphy_settle = 0;
+				// csi_param->dphy_data_settle = 0x10;
+				// csi_param->dphy_clk_settle = 0x10;
+				csi_param->dphy_trail = 155;
 				csi_param->dphy_csi2_resync_dmy_cycle = 0x15;
 			} else {
 				DRV_LOGE(ctx, "phy_ctrl_ver is invalid\n");
@@ -1552,9 +1578,11 @@ static int get_csi_param(struct subdrv_ctx *ctx,
 				csi_param->dphy_csi2_resync_dmy_cycle = 0x13;
 			} else if (!strcasecmp(ctx->aov_phy_ctrl_ver,
 				MT6989_PHY_CTRL_VERSIONS)) {
-				csi_param->dphy_data_settle = 0x10;
-				csi_param->dphy_clk_settle = 0x10;
-				csi_param->dphy_trail = 0x10;
+				csi_param->not_fixed_trail_settle = 0;
+				csi_param->not_fixed_dphy_settle = 0;
+				// csi_param->dphy_data_settle = 0x10;
+				// csi_param->dphy_clk_settle = 0x10;
+				csi_param->dphy_trail = 142;
 				csi_param->dphy_csi2_resync_dmy_cycle = 0x13;
 			} else {
 				DRV_LOGE(ctx, "phy_ctrl_ver is invalid\n");
@@ -1588,9 +1616,11 @@ static int get_csi_param(struct subdrv_ctx *ctx,
 				csi_param->dphy_csi2_resync_dmy_cycle = 0x14;
 			} else if (!strcasecmp(ctx->aov_phy_ctrl_ver,
 				MT6989_PHY_CTRL_VERSIONS)) {
-				csi_param->dphy_data_settle = 0x10;
-				csi_param->dphy_clk_settle = 0x10;
-				csi_param->dphy_trail = 0x10;
+				csi_param->not_fixed_trail_settle = 0;
+				csi_param->not_fixed_dphy_settle = 0;
+				// csi_param->dphy_data_settle = 0x10;
+				// csi_param->dphy_clk_settle = 0x10;
+				csi_param->dphy_trail = 150;
 				csi_param->dphy_csi2_resync_dmy_cycle = 0x14;
 			} else {
 				DRV_LOGE(ctx, "phy_ctrl_ver is invalid\n");
@@ -1630,9 +1660,11 @@ static int get_csi_param(struct subdrv_ctx *ctx,
 				csi_param->dphy_csi2_resync_dmy_cycle = 0x1C;
 			} else if (!strcasecmp(ctx->aov_phy_ctrl_ver,
 				MT6989_PHY_CTRL_VERSIONS)) {
-				csi_param->dphy_data_settle = 0x10;
-				csi_param->dphy_clk_settle = 0x10;
-				csi_param->dphy_trail = 0x10;
+				csi_param->not_fixed_trail_settle = 0;
+				csi_param->not_fixed_dphy_settle = 0;
+				// csi_param->dphy_data_settle = 0x10;
+				// csi_param->dphy_clk_settle = 0x10;
+				csi_param->dphy_trail = 213;
 				csi_param->dphy_csi2_resync_dmy_cycle = 0x1C;
 			} else {
 				DRV_LOGE(ctx, "phy_ctrl_ver is invalid\n");
@@ -1845,13 +1877,14 @@ static void set_data_rate_global_timing_phy_ctrl(void *arg)
 		subdrv_i2c_wr_u8(ctx, 0x0827, 0x0F);	// TCLK_PRE_EX[7:0]
 		break;
 	case SENSOR_SCENARIO_ID_CUSTOM1:
+#ifndef AOV_EINT_UT
 		subdrv_i2c_wr_u8(ctx, 0x0808, 0x02);	// PHY_CTRL
 		if (!ctx->sensor_debug_dphy_global_timing_continuous_clk) {
 			subdrv_i2c_wr_u8(ctx, 0x080A, 0x00);
 			subdrv_i2c_wr_u8(ctx, 0x080B, 0xC3);
 		} else {
 			subdrv_i2c_wr_u8(ctx, 0x080A, 0x00);	// TCLK_POST_EX[9:8]
-			subdrv_i2c_wr_u8(ctx, 0x080B, 0x64);	// TCLK_POST_EX[7:0]
+			subdrv_i2c_wr_u8(ctx, 0x080B, 0xFF);	// TCLK_POST_EX[7:0]
 		}
 		subdrv_i2c_wr_u8(ctx, 0x080C, 0x00);	// THS_PREPARE_EX[9:8]
 		subdrv_i2c_wr_u8(ctx, 0x080D, 0x1F);	// THS_PREPARE_EX[7:0]
@@ -1876,6 +1909,7 @@ static void set_data_rate_global_timing_phy_ctrl(void *arg)
 		}
 		subdrv_i2c_wr_u8(ctx, 0x0826, 0x00);	// TCLK_PRE_EX[9:8]
 		subdrv_i2c_wr_u8(ctx, 0x0827, 0x0F);	// TCLK_PRE_EX[7:0]
+#endif
 		break;
 	case SENSOR_SCENARIO_ID_CUSTOM2:
 		subdrv_i2c_wr_u8(ctx, 0x0808, 0x02);	// PHY_CTRL
@@ -1884,7 +1918,7 @@ static void set_data_rate_global_timing_phy_ctrl(void *arg)
 			subdrv_i2c_wr_u8(ctx, 0x080B, 0xC1);
 		} else {
 			subdrv_i2c_wr_u8(ctx, 0x080A, 0x00);	// TCLK_POST_EX[9:8]
-			subdrv_i2c_wr_u8(ctx, 0x080B, 0x64);	// TCLK_POST_EX[7:0]
+			subdrv_i2c_wr_u8(ctx, 0x080B, 0xFF);	// TCLK_POST_EX[7:0]
 		}
 		subdrv_i2c_wr_u8(ctx, 0x080C, 0x00);	// THS_PREPARE_EX[9:8]
 		subdrv_i2c_wr_u8(ctx, 0x080D, 0x27);	// THS_PREPARE_EX[7:0]
@@ -1917,7 +1951,7 @@ static void set_data_rate_global_timing_phy_ctrl(void *arg)
 			subdrv_i2c_wr_u8(ctx, 0x080B, 0xC2);
 		} else {
 			subdrv_i2c_wr_u8(ctx, 0x080A, 0x00);	// TCLK_POST_EX[9:8]
-			subdrv_i2c_wr_u8(ctx, 0x080B, 0x64);	// TCLK_POST_EX[7:0]
+			subdrv_i2c_wr_u8(ctx, 0x080B, 0xFF);	// TCLK_POST_EX[7:0]
 		}
 		subdrv_i2c_wr_u8(ctx, 0x080C, 0x00);	// THS_PREPARE_EX[9:8]
 		subdrv_i2c_wr_u8(ctx, 0x080D, 0x1F);	// THS_PREPARE_EX[7:0]
@@ -1956,7 +1990,7 @@ static void set_data_rate_global_timing_phy_ctrl(void *arg)
 			subdrv_i2c_wr_u8(ctx, 0x080B, 0xC9);
 		} else {
 			subdrv_i2c_wr_u8(ctx, 0x080A, 0x00);	// TCLK_POST_EX[9:8]
-			subdrv_i2c_wr_u8(ctx, 0x080B, 0x64);	// TCLK_POST_EX[7:0]
+			subdrv_i2c_wr_u8(ctx, 0x080B, 0xFF);	// TCLK_POST_EX[7:0]
 		}
 		subdrv_i2c_wr_u8(ctx, 0x080C, 0x00);	// THS_PREPARE_EX[9:8]
 		subdrv_i2c_wr_u8(ctx, 0x080D, 0x17);	// THS_PREPARE_EX[7:0]
@@ -2063,6 +2097,7 @@ static int pwr_seq_common_enable_for_mode_transition(struct adaptor_ctx *ctx)
 	ret = clk_set_parent(ctx->clk[CLK1_MCLK1], ctx->clk[CLK1_26M]);
 	if (ret) {
 		DRV_LOG_MUST(ctx, "enable mclk's parent(fail),ret(%d)\n", ret);
+		WRAP_AEE_EXCEPTION("clk_set_parent", "Err");
 		return ret;
 	}
 	DRV_LOG_MUST(ctx, "enable mclk's parent(correct)\n");
@@ -2143,6 +2178,9 @@ static int pwr_seq_common_enable_for_mode_transition(struct adaptor_ctx *ctx)
 
 static int set_pwr_seq_reset_view_to_sensing(void *arg)
 {
+#ifdef AOV_EINT_UT
+	return 0;
+#else
 	struct subdrv_ctx *ctx = (struct subdrv_ctx *)arg;
 
 	int ret = 0;
@@ -2215,6 +2253,7 @@ static int set_pwr_seq_reset_view_to_sensing(void *arg)
 	mdelay(4);	// response time T7 in datasheet
 
 	return ret;
+#endif
 }
 
 static int pwr_seq_reset_sens_to_viewing(struct subdrv_ctx *ctx)
@@ -2253,6 +2292,7 @@ static int pwr_seq_reset_sens_to_viewing(struct subdrv_ctx *ctx)
 		return ret;
 	}
 	DRV_LOG(ctx, "select(%s)(correct)\n", state_names[STATE_SDA_AP]);
+	_adaptor_ctx->is_i2c_bus_scp = false;
 	mdelay(1);
 
 	subdrv_i2c_wr_u8(ctx, 0x0100, 0x00);
@@ -2333,10 +2373,12 @@ static int set_streaming_control(void *arg, bool enable)
 			DRV_LOG_MUST(ctx,
 				"on(correct),stream_refcnt_for_aov(%d)\n",
 				stream_refcnt_for_aov);
+#ifndef AOV_EINT_UT
 			if (ctx->s_ctx.mode[ctx->current_scenario_id].aov_mode) {
 				// subdrv_i2c_wr_u8(ctx, 0x32A0, 0x01);
 				subdrv_i2c_wr_u8(ctx, 0x42B0, 0x00);
 			}
+#endif
 		}
 		subdrv_i2c_wr_u8(ctx, 0x0100, 0X01);
 		DRV_LOG_MUST(ctx,

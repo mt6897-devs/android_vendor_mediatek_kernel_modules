@@ -8,6 +8,8 @@
 
 #include <linux/types.h>
 #include <linux/media.h>
+#include <media/v4l2-subdev.h>
+#include "mtk_cam-raw_pads.h"
 
 enum mraw_dmao_id {
 	imgo_m1 = 0,
@@ -160,6 +162,9 @@ struct plat_v4l2_data {
 	int timestamp_buffer_ofst;
 	int reserved_camsv_dev_id;
 
+	u8 *vb2_queues_support_list;
+	int vb2_queues_support_list_num;
+
 	int (*set_meta_stats_info)(int ipi_id, void *addr, size_t size,
 				   const struct set_meta_stats_info_param *p);
 	int (*get_meta_stats_port_size)(int ipi_id, void *addr, int dma_port, int *size);
@@ -167,7 +172,8 @@ struct plat_v4l2_data {
 	int (*get_sv_dma_th_setting)(unsigned int dev_id, unsigned int fifo_img_p1,
 		unsigned int fifo_img_p2, unsigned int fifo_len_p1, unsigned int fifo_len_p2,
 		struct sv_dma_th_setting *th_setting);
-	int (*get_sv_two_smi_setting)(int *sv_two_smi_en);
+	int (*get_sv_two_smi_setting)(int *sv_two_smi_en, int *sv_support_two_smi_out);
+	int (*get_single_sv_opp_idx)(unsigned int * opp_idx);
 	int (*get_mraw_dmao_common_setting)(struct mraw_dma_th_setting *mraw_th_setting,
 		struct mraw_cq_th_setting *mraw_cq_setting);
 	int (*set_mraw_meta_stats_info)(int ipi_id, void *addr, struct dma_info *info);
@@ -180,6 +186,14 @@ struct plat_data_hw {
 	int cammux_id_raw_start;
 	int raw_icc_path_num;
 	int yuv_icc_path_num;
+	int max_main_pipe_w;
+	int max_main_pipe_twin_w;
+	int pixel_mode_max;
+	/**
+	 * In 6989 and 6897, if the width < 1920, hw can't accept 2 pixel mode.
+	 * pixel_mode_contraints is to enable the corrosponding protection.
+	 */
+	bool has_pixel_mode_contraints;
 
 	int (*query_raw_dma_group)(int m4u_id, u32 group[4]);
 	int (*query_yuv_dma_group)(int m4u_id, u32 group[4]);
@@ -190,6 +204,7 @@ struct plat_data_hw {
 	int (*query_icc_path_idx)(int domain, int smi_port);
 
 	bool dcif_slb_support;
+	bool apu_support;
 };
 
 struct camsys_platform_data {
@@ -214,6 +229,9 @@ void set_platform_data(const struct camsys_platform_data *platform_data);
 #define GET_PLAT_HW(member) (cur_platform->hw->member)
 
 /* platform data list */
+#ifdef CAMSYS_ISP7SP_MT6878
+extern struct camsys_platform_data mt6878_data;
+#endif
 #ifdef CAMSYS_ISP7SP_MT6897
 extern struct camsys_platform_data mt6897_data;
 #endif

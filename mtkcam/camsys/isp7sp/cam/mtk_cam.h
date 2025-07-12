@@ -57,6 +57,7 @@ struct mtk_rpmsg_device;
 
 #define SENSOR_META_BUF_SIZE 0x8000
 #define SENSOR_META_BUF_NUM 8
+//#define RUN_ADL_FRAME_MODE_FROM_RAWI
 
 struct mtk_cam_adl_work {
 	struct work_struct work;
@@ -188,6 +189,8 @@ struct mtk_cam_ctx {
 	struct mtk_cam_pool sensor_meta_pool;
 
 	u64 sw_recovery_ts;
+
+	bool enable_luma_dump;
 };
 
 struct mtk_cam_v4l2_pipelines {
@@ -282,6 +285,12 @@ struct mtk_cam_device {
 	struct mtk_camsys_dvfs dvfs;
 
 	struct mtk_cam_debug dbg;
+
+	/* shutdown flow */
+	wait_queue_head_t shutdown_wq;
+
+	/* mminfra debug cb */
+	struct notifier_block mminfra_dbg_cb;
 };
 
 static inline struct device *subdev_to_cam_dev(struct v4l2_subdev *sd)
@@ -370,6 +379,7 @@ int mtk_cam_ctx_all_nodes_idle(struct mtk_cam_ctx *ctx);
 int mtk_cam_ctx_stream_on(struct mtk_cam_ctx *ctx);
 int mtk_cam_ctx_stream_off(struct mtk_cam_ctx *ctx);
 void mtk_cam_ctx_engine_off(struct mtk_cam_ctx *ctx);
+void mtk_cam_ctx_engine_enable_irq(struct mtk_cam_ctx *ctx);
 void mtk_cam_ctx_engine_disable_irq(struct mtk_cam_ctx *ctx);
 void mtk_cam_ctx_engine_reset(struct mtk_cam_ctx *ctx);
 void mtk_cam_ctx_engine_dc_sw_recovery(struct mtk_cam_ctx *ctx);

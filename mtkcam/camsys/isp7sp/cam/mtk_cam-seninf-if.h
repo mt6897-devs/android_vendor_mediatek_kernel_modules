@@ -15,14 +15,18 @@ int mtk_cam_seninf_set_pixelmode_camsv(struct v4l2_subdev *sd, int pad_id,
 
 int mtk_cam_seninf_set_camtg(struct v4l2_subdev *sd, int pad_id, int camtg);
 
+bool mtk_cam_seninf_irq_seamless_debug_en(struct v4l2_subdev *sd, bool en);
+
 int mtk_cam_seninf_get_pixelrate(struct v4l2_subdev *sd, s64 *pixelrate);
 
 int mtk_cam_seninf_calc_pixelrate(struct device *dev, s64 width, s64 height, s64 hblank,
 				  s64 vblank, int fps_n, int fps_d, s64 sensor_pixel_rate);
 
 int mtk_cam_seninf_dump(struct v4l2_subdev *sd, u32 seq_id, bool force_check);
+int mtk_cam_seninf_get_csi_irq_status(struct v4l2_subdev *sd, struct v4l2_ctrl *ctrl);
 
 int mtk_cam_seninf_dump_current_status(struct v4l2_subdev *sd);
+int mtk_cam_seninf_set_abort(struct v4l2_subdev *sd);
 
 int mtk_cam_seninf_check_timeout(struct v4l2_subdev *sd, u64 time_waited);
 u64 mtk_cam_seninf_get_frame_time(struct v4l2_subdev *sd, u32 seq_id);

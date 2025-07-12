@@ -268,6 +268,7 @@ struct mtk_imgsys_dvfs {
 	unsigned long freq;
 	unsigned int vss_task_cnt;
 	unsigned int smvr_task_cnt;
+	unsigned int vr_task_cnt;
 	unsigned int pix_mode;
 };
 
@@ -398,6 +399,8 @@ struct mtk_imgsys_dev {
 	dma_addr_t work_buf_pa;
 	u32 *traw_work_buf_va;
 	dma_addr_t traw_work_buf_pa;
+	u32 *qof_work_buf_va;
+	dma_addr_t qof_work_buf_pa;
 	/*streamon parallel*/
 	struct completion comp;
 	/* register iommu TF cb */

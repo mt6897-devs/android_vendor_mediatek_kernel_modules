@@ -196,8 +196,8 @@ static inline bool mtk_cam_check_mipi_pixel_rate(struct mtk_cam_res_calc *c,
 static inline bool mtk_cam_raw_check_line_buffer(struct mtk_cam_res_calc *c,
 						 bool enable_log)
 {
-	const int max_main_pipe_w = 6632;
-	const int max_main_pipe_twin_w = 6200;
+	const int max_main_pipe_w = GET_PLAT_HW(max_main_pipe_w);
+	const int max_main_pipe_twin_w = GET_PLAT_HW(max_main_pipe_twin_w);
 	int max_width;
 	bool valid;
 
@@ -223,6 +223,10 @@ static inline bool mtk_cam_raw_check_throughput(struct mtk_cam_res_calc *c,
 {
 	int processed_w = process_pxl_per_line(c, 1, enable_log);
 
+	if (enable_log)
+		pr_info("%s: c->width %d processed_w %d\n",
+			__func__, c->width, processed_w);
+
 	return c->width <= processed_w;
 }
 
@@ -245,7 +249,9 @@ static inline bool mtk_cam_raw_check_slb_size(struct mtk_cam_res_calc *c,
 		return true;
 
 	processed_w = process_pxl_per_sensor_line(c, 1, enable_log);
-	max_pending = (size_t)max(c->width - processed_w, 0) * c->height;
+
+	/* todo: calculate with bpp */
+	max_pending = (size_t)max(c->width - processed_w, 0) * c->height * 10 / 8;
 
 	/* 5% as margin */
 	valid = (max_pending * 100 < (size_t)c->slb_size * 95);

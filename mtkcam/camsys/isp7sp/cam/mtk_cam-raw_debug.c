@@ -195,7 +195,7 @@ void dump_yuv_dma_fbc(struct mtk_yuv_device *yuv)
 
 void dump_dmatop_dc_st(struct mtk_raw_device *raw)
 {
-	char str[128];
+	char str[256];
 	int n;
 
 	str[0] = '\0';
@@ -209,8 +209,12 @@ void dump_dmatop_dc_st(struct mtk_raw_device *raw)
 	n += scnprintf(str + n, sizeof(str) - n, ", DC DBG LINE CNT:");
 	n += scnprintf(str + n, sizeof(str) - n, " RAWI_R5:0x%08x",
 		      readl(raw->base + REG_CAMRAWDMATOP_DC_DBG_LINE_CNT_RAWI_R5));
+	n += scnprintf(str + n, sizeof(str) - n, " UFDI_R5:0x%08x",
+		      readl(raw->base + REG_CAMRAWDMATOP_DC_DBG_LINE_CNT_UFDI_R5));
 	n += scnprintf(str + n, sizeof(str) - n, " RAWI_R2:0x%08x",
 		      readl(raw->base + REG_CAMRAWDMATOP_DC_DBG_LINE_CNT_RAWI_R2));
+	n += scnprintf(str + n, sizeof(str) - n, " UFDI_R2:0x%08x",
+		      readl(raw->base + REG_CAMRAWDMATOP_DC_DBG_LINE_CNT_UFDI_R2));
 
 	dev_info(raw->dev, "%s: %s\n", __func__, str);
 }
@@ -223,6 +227,8 @@ void set_topdebug_rdyreq(struct mtk_raw_device *dev, u32 event)
 	writel(event, dev->base + REG_CAMCTL_DBG_SET2);
 	writel(val, dev->yuv_base + REG_CAMCTL_DBG_SET);
 	writel(event, dev->yuv_base + REG_CAMCTL_DBG_SET2);
+	writel(val, dev->rms_base + REG_CAMCTL_DBG_SET);
+	writel(event, dev->rms_base + REG_CAMCTL_DBG_SET2);
 }
 
 void dump_topdebug_rdyreq(struct mtk_raw_device *dev)
@@ -232,6 +238,14 @@ void dump_topdebug_rdyreq(struct mtk_raw_device *dev)
 		0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6,
 		/* rdy group 1~7 */
 		0x8, 0x9, 0xA, 0xB, 0xC, 0xD, 0xE,
+		/* latched_events */
+		0xF,
+	};
+	static const u32 debug_rms_sel[] = {
+		/* req group 1~3 */
+		0x0, 0x1, 0x2,
+		/* rdy group 1~3 */
+		0x8, 0x9, 0xA,
 		/* latched_events */
 		0xF,
 	};
@@ -258,16 +272,25 @@ void dump_topdebug_rdyreq(struct mtk_raw_device *dev)
 		dev_info(dev->dev, "YUV debug_set 0x%08x port 0x%08x\n",
 			 readl(dbg_set), readl(dbg_port));
 	}
+
+	dbg_set = dev->rms_base + REG_CAMCTL_DBG_SET;
+	dbg_port = dev->rms_base + REG_CAMCTL_DBG_PORT;
+
+	set = (readl(dbg_set) & 0xfff000) | 0x1;
+	for (i = 0; i < ARRAY_SIZE(debug_rms_sel); i++) {
+		writel(set | debug_rms_sel[i] << 8, dbg_set);
+		dev_info(dev->dev, "RMS debug_set 0x%08x port 0x%08x\n",
+			 readl(dbg_set), readl(dbg_port));
+	}
 }
 
+#define MAX_DEBUG_SIZE (32)
 void mtk_cam_dump_dma_debug(struct mtk_raw_device *raw_dev,
 			    void __iomem *dmatop_base,
 			    const char *dma_name,
 			    struct dma_debug_item *items, int n)
 {
 	struct device *dev = raw_dev->dev;
-#define MAX_DEBUG_SIZE (32)
-
 	void __iomem *dbg_sel = dmatop_base + 0x70;
 	void __iomem *dbg_port = dmatop_base + 0x74;
 	int i = 0;
@@ -302,4 +325,40 @@ void mtk_cam_dump_dma_debug(struct mtk_raw_device *raw_dev,
 	for (i = 0; i < n; i++)
 		dev_info(dev, "%08x: %08x [%s]\n",
 			 crc_en | items[i].debug_sel, vals[i], items[i].msg);
+}
+
+void mtk_cam_dump_ufd_debug(struct mtk_raw_device *raw_dev,
+			    const char *mod_name,
+			    struct dma_debug_item *items, int n)
+{
+	struct device *dev = raw_dev->dev;
+	void __iomem *dbg_sel =  raw_dev->base + REG_CAMCTL_DBG_SET;
+	void __iomem *dbg_port = raw_dev->base + REG_CAMCTL_DBG_PORT;
+	int i = 0;
+	unsigned int vals[MAX_DEBUG_SIZE];
+
+	if (n >= MAX_DEBUG_SIZE) {
+		dev_info(dev, "%s: should enlarge array size for n(%d)\n",
+			__func__, n);
+		return;
+	}
+
+	for (i = 0; i < n; i++) {
+		int cur_sel, actual_sel;
+
+		cur_sel = items[i].debug_sel;
+		writel(cur_sel, dbg_sel);
+
+		actual_sel = readl(dbg_sel);
+		if ((actual_sel ^ cur_sel) & 0xffffff)
+			dev_info(dev, "failed to write dbg_sel %08x actual %08x\n",
+				 cur_sel, actual_sel);
+
+		vals[i] = readl(dbg_port);
+	};
+
+	dev_info(dev, "%s: %s\n", __func__, mod_name);
+	for (i = 0; i < n; i++)
+		dev_info(dev, "%08x: %08x [%s]\n",
+			 items[i].debug_sel, vals[i], items[i].msg);
 }

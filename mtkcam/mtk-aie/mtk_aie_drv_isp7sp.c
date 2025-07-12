@@ -23,6 +23,7 @@
 #include "iommu_debug.h"
 
 #include "aie_mp_fw_7sp_def.h"
+#include "mtk_aie-trace.h"
 
 #define FDVT_USE_GCE 1
 #define FLD
@@ -508,6 +509,21 @@ static void aie_fdvt_dump_reg(struct mtk_aie_dev *fd)
 	//int fld_face_num = fd->aie_cfg->fld_face_num;
 	unsigned int loop_num = 1;
 	int i = 0;
+	unsigned int event_val = 0;
+
+	if (fd->is_shutdown) {
+		aie_dev_info(fd->dev, "%s: skip for shutdown", __func__);
+		return;
+	}
+
+	aie_dump_cg_reg(fd);
+
+	aie_dump_cg_reg(fd);
+
+	if (fd->is_shutdown) {
+		aie_dev_info(fd->dev, "%s: skip for shutdown", __func__);
+		return;
+	}
 
 	aie_dump_cg_reg(fd);
 
@@ -516,8 +532,13 @@ static void aie_fdvt_dump_reg(struct mtk_aie_dev *fd)
 		 readl(fd->fd_base + AIE_RESULT_1_REG),
 		 readl(fd->fd_base + AIE_DMA_CTL_REG));
 
-	aie_dev_info(fd->dev, "%s interrupt status: %x", __func__,
+	aie_dev_info(fd->dev, "%s interrupt enable: %x", __func__,
 		 readl(fd->fd_base + AIE_INT_EN_REG));
+
+	writel(0x11, fd->fd_base + AIE_INT_EN_REG);
+	aie_dev_info(fd->dev, "%s interrupt status: %x", __func__,
+		 readl(fd->fd_base + AIE_INT_REG));
+
 	if (fd->aie_cfg->sel_mode == ATTRIBUTEMODE) {
 		aie_dev_info(fd->dev, "[ATTRMODE] w_idx = %d, r_idx = %d\n",
 			 fd->attr_para->w_idx, fd->attr_para->r_idx);
@@ -952,6 +973,12 @@ static void aie_fdvt_dump_reg(struct mtk_aie_dev *fd)
 				(unsigned int)readl(fd->fd_base + 0x158));
 		}
 	}
+
+	cmdq_mbox_enable(fd->fdvt_clt->chan);
+	event_val = cmdq_get_event(fd->fdvt_clt->chan, fd->aie_cmdq_event);
+	aie_dev_info(fd->dev, "FDVT cmdq event id: %d, status: %d\n",
+		fd->aie_cmdq_event, event_val);
+	cmdq_mbox_disable(fd->fdvt_clt->chan);
 }
 
 static void aie_free_dmabuf(struct mtk_aie_dev *fd, struct imem_buf_info *bufinfo)
@@ -3170,6 +3197,11 @@ static void aie_reset(struct mtk_aie_dev *fd)
 {
 	unsigned int ret = 0, counter = 0;
 
+	if (fd->is_shutdown) {
+		aie_dev_info(fd->dev, "%s: skip for shutdown", __func__);
+		return;
+	}
+
 	writel(0x20000, fd->fd_base + AIE_START_REG);
 	ret = (unsigned int)readl(fd->fd_base + AIE_START_REG);
 	while (!((ret & 0X20000) == 0) && counter < 10) {
@@ -3185,6 +3217,8 @@ static int aie_alloc_aie_buf(struct mtk_aie_dev *fd)
 {
 	int ret = -1;
 	int err_tag = 0;
+
+	AIE_SYSTRACE_BEGIN("%s", __func__);
 
 	aie_reset(fd);
 
@@ -3227,6 +3261,7 @@ static int aie_alloc_aie_buf(struct mtk_aie_dev *fd)
 	aie_arrange_fddma_buf(fd);
 	aie_arrange_attrdma_buf(fd);
 
+	AIE_SYSTRACE_END();
 	return ret;
 
 fddma_fail:
@@ -3240,6 +3275,9 @@ max_pyramid_size_too_large:
 	kfree(fd->dma_para);
 	fd->dma_para = NULL;
 	aie_dev_info(fd->dev, "Failed to alloc aie buf: %d\n", err_tag);
+
+	AIE_SYSTRACE_END();
+
 	return ret;
 
 }
@@ -3327,6 +3365,11 @@ static void aie_uninit(struct mtk_aie_dev *fd)
 static int aie_prepare(struct mtk_aie_dev *fd, struct aie_enq_info *aie_cfg)
 {
 	int ret = 0;
+	static int pre_mode = FLDMODE; // init fld mode, because fld could not enter to aie_prepare
+
+	AIE_SYSTRACE_BEGIN("%s", __func__);
+
+	AIE_SYSTRACE_BEGIN("%s", __func__);
 
 	if (fd->fd_state != STATE_INIT) {
 		aie_dev_info(fd->dev, "%s fd state fail: %d\n",
@@ -3342,6 +3385,7 @@ static int aie_prepare(struct mtk_aie_dev *fd, struct aie_enq_info *aie_cfg)
 		fd->base_para->pyramid_height =
 			fd->base_para->max_pyramid_height;
 		fd->base_para->number_of_pyramid = 3;
+		pre_mode = aie_cfg->sel_mode;
 	} else {
 		if (aie_cfg->pyramid_base_width >
 			fd->base_para->max_pyramid_width ||
@@ -3364,12 +3408,15 @@ static int aie_prepare(struct mtk_aie_dev *fd, struct aie_enq_info *aie_cfg)
 			fd->base_para->max_pyramid_height;
 		fd->base_para->number_of_pyramid =
 			aie_cfg->number_of_pyramid;
-		if (aie_cfg->pyramid_base_width !=
-			fd->base_para->pyramid_width) {
-			aie_dev_dbg(fd->dev, "pre: %d, cur: %d, num: %d\n",
+		if (!((aie_cfg->pyramid_base_width ==
+			fd->base_para->pyramid_width) && (aie_cfg->sel_mode == pre_mode))) {
+			aie_dev_dbg(fd->dev, "pre: (%d,%d) cur: (%d,%d) num: %d\n",
 				fd->base_para->pyramid_width,
+				pre_mode,
 				aie_cfg->pyramid_base_width,
+				aie_cfg->sel_mode,
 				fd->base_para->number_of_pyramid);
+			pre_mode = aie_cfg->sel_mode;
 			fd->base_para->pyramid_width =
 				aie_cfg->pyramid_base_width;
 
@@ -3427,15 +3474,66 @@ static int aie_prepare(struct mtk_aie_dev *fd, struct aie_enq_info *aie_cfg)
 			(fd->attr_para->w_idx + 1) % MAX_ENQUE_FRAME_NUM;
 	}
 
+	AIE_SYSTRACE_END();
+
 	return ret;
 }
 
 #ifdef FDVT_USE_GCE
+static void mtk_aie_job_timeout_work(struct mtk_aie_dev *fd)
+{
+	unsigned int i;
+
+	AIE_SYSTRACE_BEGIN("%s", __func__);
+
+	aie_dev_info(fd->dev, "FD Job timeout!");
+
+	aie_dev_info(fd->dev, "AIE mode:%d fmt:%d w:%d h:%d s:%d pw%d ph%d np%d dg%d",
+		 fd->aie_cfg->sel_mode,
+		 fd->aie_cfg->src_img_fmt,
+		 fd->aie_cfg->src_img_width,
+		 fd->aie_cfg->src_img_height,
+		 fd->aie_cfg->src_img_stride,
+		 fd->aie_cfg->pyramid_base_width,
+		 fd->aie_cfg->pyramid_base_height,
+		 fd->aie_cfg->number_of_pyramid,
+		 fd->aie_cfg->rotate_degree);
+	aie_dev_info(fd->dev, "roi%d x1:%d y1:%d x2:%d y2:%d pad%d l%d r%d d%d u%d f%d",
+		 fd->aie_cfg->en_roi,
+		 fd->aie_cfg->src_roi.x1,
+		 fd->aie_cfg->src_roi.y1,
+		 fd->aie_cfg->src_roi.x2,
+		 fd->aie_cfg->src_roi.y2,
+		 fd->aie_cfg->en_padding,
+		 fd->aie_cfg->src_padding.left,
+		 fd->aie_cfg->src_padding.right,
+		 fd->aie_cfg->src_padding.down,
+		 fd->aie_cfg->src_padding.up,
+		 fd->aie_cfg->freq_level);
+
+	aie_get_time(fd->tv, 7);
+	aie_fdvt_dump_reg(fd);
+
+	for (i = 0; i < MAX_DEBUG_TIMEVAL; i++)
+		aie_dev_info(fd->dev, "tv[%d], %lld.%lld s",
+			i, fd->tv[i] / 1000000000, fd->tv[i] % 1000000000);
+
+	aie_irqhandle(fd);
+	aie_reset(fd);
+
+	AIE_SYSTRACE_END();
+}
+
 static void AIECmdqCB(struct cmdq_cb_data data)
 {
 	struct mtk_aie_dev *fd = (struct mtk_aie_dev *)data.data;
+	bool isHwHang = (data.err == 0) ? false : true;
 
-	aie_irqhandle(fd);
+	fd->isHwHang = isHwHang;
+
+	if (isHwHang)
+		mtk_aie_job_timeout_work(fd);
+
 	queue_work(fd->frame_done_wq, &fd->req_work.work);
 }
 
@@ -3499,8 +3597,14 @@ static void config_aie_cmdq_hw(struct mtk_aie_dev *fd, struct aie_enq_info *aie_
 	unsigned int loop_num = 0;
 	unsigned int loop_reg_val = 0;
 
+	AIE_SYSTRACE_BEGIN("%s", __func__);
+
 	aie_get_time(fd->tv, 1);
 	pkt = cmdq_pkt_create(fd->fdvt_clt);
+	aie_get_time(fd->tv, 2);
+
+	fd->pkt = pkt;
+
 	/*for early porting*/
 	if (aie_cfg->sel_mode == FDMODE) {
 		cmdq_pkt_write(pkt, NULL, FDVT_ENABLE_HW, 0x00000111,
@@ -3510,7 +3614,10 @@ static void config_aie_cmdq_hw(struct mtk_aie_dev *fd, struct aie_enq_info *aie_
 			(aie_cfg->number_of_pyramid - 1);
 		cmdq_pkt_write(pkt, NULL, FDVT_LOOP_HW, loop_reg_val, CMDQ_REG_MASK);
 
-		cmdq_pkt_write(pkt, NULL, FDVT_INT_EN_HW, 0x1, CMDQ_REG_MASK);
+		/* write clear irq */
+		cmdq_pkt_write(pkt, NULL, FDVT_INT_EN_HW, 0x11, CMDQ_REG_MASK);
+		cmdq_pkt_write(pkt, NULL, FDVT_INT_HW, 0x1, CMDQ_REG_MASK);
+
 		cmdq_pkt_write(pkt, NULL, FDVT_RS_CON_BASE_ADR_HW,
 				fd->reg_cfg.rs_adr, CMDQ_REG_MASK);
 		cmdq_pkt_write(pkt, NULL, FDVT_FD_CON_BASE_ADR_HW,
@@ -3520,7 +3627,13 @@ static void config_aie_cmdq_hw(struct mtk_aie_dev *fd, struct aie_enq_info *aie_
 
 		cmdq_pkt_write(pkt, NULL, FDVT_START_HW, 0x1, CMDQ_REG_MASK);
 
-		cmdq_pkt_wfe(pkt, fd->fdvt_event_id);
+		if (fd->is_cmdq_polling)
+			cmdq_pkt_poll_timeout(pkt, 0x1, SUBSYS_NO_SUPPORT,
+				FDVT_INT_HW, 0x1, AIE_POLL_TIME_INFINI,
+				CMDQ_GPR_R03 + CMDQ_GPR_R03_IDX);
+		else
+			cmdq_pkt_wfe(pkt, fd->fdvt_event_id);
+
 		/*cmdqRecWait(handle, CMDQ_EVENT_IPE_EVENT_TX_FRAME_DONE_0);*/
 		cmdq_pkt_write(pkt, NULL, FDVT_START_HW, 0x0, CMDQ_REG_MASK);
 
@@ -3529,7 +3642,11 @@ static void config_aie_cmdq_hw(struct mtk_aie_dev *fd, struct aie_enq_info *aie_
 			       CMDQ_REG_MASK);
 		cmdq_pkt_write(pkt, NULL, FDVT_LOOP_HW, 0x00001A00,
 			       CMDQ_REG_MASK);
-		cmdq_pkt_write(pkt, NULL, FDVT_INT_EN_HW, 0x1, CMDQ_REG_MASK);
+
+		/* write clear irq */
+		cmdq_pkt_write(pkt, NULL, FDVT_INT_EN_HW, 0x11, CMDQ_REG_MASK);
+		cmdq_pkt_write(pkt, NULL, FDVT_INT_HW, 0x1, CMDQ_REG_MASK);
+
 		cmdq_pkt_write(pkt, NULL, FDVT_RS_CON_BASE_ADR_HW,
 			       fd->reg_cfg.rs_adr,
 			       CMDQ_REG_MASK);
@@ -3542,7 +3659,12 @@ static void config_aie_cmdq_hw(struct mtk_aie_dev *fd, struct aie_enq_info *aie_
 
 		cmdq_pkt_write(pkt, NULL, FDVT_START_HW, 0x1, CMDQ_REG_MASK);
 
-		cmdq_pkt_wfe(pkt, fd->fdvt_event_id);
+		if (fd->is_cmdq_polling)
+			cmdq_pkt_poll_timeout(pkt, 0x1, SUBSYS_NO_SUPPORT,
+				FDVT_INT_HW, 0x1, AIE_POLL_TIME_INFINI,
+				CMDQ_GPR_R03 + CMDQ_GPR_R03_IDX);
+		else
+			cmdq_pkt_wfe(pkt, fd->fdvt_event_id);
 		/*cmdqRecWait(handle, CMDQ_EVENT_IPE_EVENT_TX_FRAME_DONE_0);*/
 		cmdq_pkt_write(pkt, NULL, FDVT_START_HW, 0x0, CMDQ_REG_MASK);
 
@@ -3574,23 +3696,31 @@ static void config_aie_cmdq_hw(struct mtk_aie_dev *fd, struct aie_enq_info *aie_
 				aie_cfg->src_img_stride,
 				CMDQ_REG_MASK);
 
+		/* write clear irq */
+		cmdq_pkt_write(pkt, NULL, FDVT_INT_EN_HW, 0x11, CMDQ_REG_MASK);
+		cmdq_pkt_write(pkt, NULL, FDVT_INT_HW, 0x1, CMDQ_REG_MASK);
+
 		/*fld mode + trigger start*/
 		cmdq_pkt_write(pkt, NULL, FDVT_BASE_HW + AIE_START_REG, 0x11, CMDQ_REG_MASK);
 
-		cmdq_pkt_wfe(pkt, fd->fdvt_event_id);
+		if (fd->is_cmdq_polling)
+			cmdq_pkt_poll_timeout(pkt, 0x1, SUBSYS_NO_SUPPORT,
+				FDVT_INT_HW, 0x1, AIE_POLL_TIME_INFINI,
+				CMDQ_GPR_R03 + CMDQ_GPR_R03_IDX);
+		else
+			cmdq_pkt_wfe(pkt, fd->fdvt_event_id);
 		/*cmdqRecWait(handle, CMDQ_EVENT_IPE_EVENT_TX_FRAME_DONE_0);*/
 		cmdq_pkt_write(pkt, NULL, FDVT_START_HW, 0x0, CMDQ_REG_MASK);
 	}
 
-	//cmdq_pkt_flush(pkt);
-	aie_get_time(fd->tv, 2);
-	cmdq_pkt_flush_async(pkt, AIECmdqCB, (void *)fd);	/* flush and destry in cmdq*/
-	cmdq_pkt_wait_complete(pkt);
 	aie_get_time(fd->tv, 3);
-	/* release resource */
-	cmdq_pkt_destroy(pkt);
+	cmdq_pkt_flush_async(pkt, AIECmdqCB, (void *)fd);	/* flush and destry in cmdq*/
+	aie_get_time(fd->tv, 4);
+
+	AIE_SYSTRACE_END();
 }
 #endif
+
 static void aie_execute(struct mtk_aie_dev *fd, struct aie_enq_info *aie_cfg)
 {
 #ifndef FDVT_USE_GCE
@@ -3704,12 +3834,16 @@ static void aie_execute(struct mtk_aie_dev *fd, struct aie_enq_info *aie_cfg)
 
 static void aie_irqhandle(struct mtk_aie_dev *fd)
 {
-	int status;
+	if (fd->is_shutdown) {
+		aie_dev_info(fd->dev, "%s: skip for shutdown", __func__);
+		return;
+	}
 
 	writel(0x0, fd->fd_base + AIE_START_REG);
 
-	/* interrupt read clear */
-	status = readl(fd->fd_base + AIE_INT_REG);
+	/* write clear irq */
+	writel(0x11, fd->fd_base + AIE_INT_EN_REG);
+	writel(0x1, fd->fd_base + AIE_INT_REG);
 }
 
 /* return aie_cfg to user space */
@@ -3729,8 +3863,10 @@ static void aie_get_fd_result(struct mtk_aie_dev *fd, struct aie_enq_info *aie_c
 	aie_cfg->fd_version = FD_VERSION;
 	aie_cfg->attr_version = ATTR_VERSION;
 
-	fd->reg_cfg.hw_result = readl(fd->fd_base + AIE_RESULT_0_REG);
-	fd->reg_cfg.hw_result1 = readl(fd->fd_base + AIE_RESULT_1_REG);
+	if (!fd->is_shutdown) {
+		fd->reg_cfg.hw_result = readl(fd->fd_base + AIE_RESULT_0_REG);
+		fd->reg_cfg.hw_result1 = readl(fd->fd_base + AIE_RESULT_1_REG);
+	}
 
 	fd_result_hw = fd->reg_cfg.hw_result;
 	fd_result_1_hw = fd->reg_cfg.hw_result1;
@@ -3781,6 +3917,11 @@ static void aie_get_fld_result(struct mtk_aie_dev *fd, struct aie_enq_info *aie_
 
 static void aie_config_fld_buf_reg(struct mtk_aie_dev *fd)
 {
+	if (fd->is_shutdown) {
+		aie_dev_info(fd->dev, "%s: skip for shutdown", __func__);
+		return;
+	}
+
 	writel(
 		AIE_IOVA(fd->img_y),
 		fd->fd_base + FLD_IMG_BASE_ADDR);
@@ -3800,7 +3941,8 @@ static void aie_arrange_config(struct mtk_aie_dev *fd)
 	/* rs config */
 	fd->base_para->fd_rs_cfg_pa = pa;
 	msb_bit = (pa & 0Xf00000000) >> 32;
-	writel(msb_bit, fd->fd_base + FDVT_RS_CON_BASE_ADR_MSB);
+	if (!fd->is_shutdown)
+		writel(msb_bit, fd->fd_base + FDVT_RS_CON_BASE_ADR_MSB);
 
 	pa += AIE_ALIGN32(fdvt_rs_confi_frame01_size);
 	g_fd_yuv2rgb_config_offset =
@@ -3809,7 +3951,8 @@ static void aie_arrange_config(struct mtk_aie_dev *fd)
 	/* yuv2rgb config */
 	fd->base_para->fd_yuv2rgb_cfg_pa = pa;
 	msb_bit = (pa & 0Xf00000000) >> 32;
-	writel(msb_bit, fd->fd_base + FDVT_YUV2RGB_CON_BASE_ADR_MSB);
+	if (!fd->is_shutdown)
+		writel(msb_bit, fd->fd_base + FDVT_YUV2RGB_CON_BASE_ADR_MSB);
 
 	pa += AIE_ALIGN32(fdvt_yuv2rgb_confi_frame01_size);
 
@@ -3825,7 +3968,8 @@ static void aie_arrange_config(struct mtk_aie_dev *fd)
 	/* fd config */
 	fd->base_para->fd_fd_cfg_pa = pa;
 	msb_bit = (pa & 0Xf00000000) >> 32;
-	writel(msb_bit, fd->fd_base + FDVT_FD_CON_BASE_ADR_MSB);
+	if (!fd->is_shutdown)
+		writel(msb_bit, fd->fd_base + FDVT_FD_CON_BASE_ADR_MSB);
 
 	pa += AIE_ALIGN32(fdvt_fd_confi_frame01_size);
 
@@ -4528,38 +4672,44 @@ static void aie_arrange_network(struct mtk_aie_dev *fd)
 	pa += AIE_ALIGN32(gender_kernel_bias_loop25_1_frame01_size);
 
 	/* fld blink weight forest model */
-	writel(AIE_IOVA(pa), fd->fd_base + FLD_BS_BASE_ADDR);
+	if (!fd->is_shutdown)
+		writel(AIE_IOVA(pa), fd->fd_base + FLD_BS_BASE_ADDR);
 	fd->dma_para->fld_blink_weight_pa = pa;
 	pa += AIE_ALIGN32(fdvt_fld_blink_weight_forest14_size);
 
 	/* fld fp forest model */
-	writel(AIE_IOVA(pa), fd->fd_base + FLD_FP_BASE_ADDR);
+	if (!fd->is_shutdown)
+		writel(AIE_IOVA(pa), fd->fd_base + FLD_FP_BASE_ADDR);
 	for (i = 0; i < FLD_MAX_INPUT; i++) {
 		fd->dma_para->fld_fp_pa[i] = pa;
 		pa += AIE_ALIGN32(fdvt_fld_fp_forest00_om45_size);
 	}
 
 	/* fld leafnode forest model */
-	writel(AIE_IOVA(pa), fd->fd_base + FLD_SH_BASE_ADDR);
+	if (!fd->is_shutdown)
+		writel(AIE_IOVA(pa), fd->fd_base + FLD_SH_BASE_ADDR);
 	for (i = 0; i < FLD_MAX_INPUT; i++) {
 		fd->dma_para->fld_leafnode_pa[i] = pa;
 		pa += AIE_ALIGN32(fdvt_fld_leafnode_forest00_size);
 	}
 
 	/* fld tree forest cv weight model */
-	writel(AIE_IOVA(pa), fd->fd_base + FLD_CV_BASE_ADDR);
+	if (!fd->is_shutdown)
+		writel(AIE_IOVA(pa), fd->fd_base + FLD_CV_BASE_ADDR);
 	for (i = 0; i < FLD_MAX_INPUT; i++) {
 		fd->dma_para->fld_cv_pa[i] = pa;
 		pa += AIE_ALIGN32(fdvt_fld_tree_forest00_cv_weight_size);
 	}
 
 	/* fld tree forest init shape model */
-	writel(AIE_IOVA(pa), fd->fd_base + FLD_MS_BASE_ADDR);
+	if (!fd->is_shutdown)
+		writel(AIE_IOVA(pa), fd->fd_base + FLD_MS_BASE_ADDR);
 	fd->dma_para->fld_shape_pa[0] = pa;
 	pa += AIE_ALIGN32(fdvt_fld_tree_forest00_init_shape_size);
 
 	/* fld tree forest tree node model */
-	writel(AIE_IOVA(pa), fd->fd_base + FLD_TR_BASE_ADDR);
+	if (!fd->is_shutdown)
+		writel(AIE_IOVA(pa), fd->fd_base + FLD_TR_BASE_ADDR);
 	for (i = 0; i < FLD_MAX_INPUT; i++) {
 		fd->dma_para->fld_tree02_pa[i] = pa;
 		pa += AIE_ALIGN32(fdvt_fld_tree_forest00_tree_node_size);
@@ -5260,46 +5410,48 @@ static void aie_arrange_network(struct mtk_aie_dev *fd)
 		va += AIE_ALIGN32(fdvt_fld_tree_forest00_tree_node_size);
 	}
 
-	/* Set up kernel offset */
-	writel(AIE_IOVA(AIE_ALIGN32(fdvt_fld_fp_forest00_om45_size)),
-		fd->fd_base + FLD_FP_FORT_OFST);
-	writel(AIE_IOVA(AIE_ALIGN32(fdvt_fld_tree_forest00_tree_node_size)),
-		fd->fd_base + FLD_TR_FORT_OFST);
-	writel(AIE_IOVA(AIE_ALIGN32(fdvt_fld_leafnode_forest00_size)),
-		fd->fd_base + FLD_SH_FORT_OFST);
-	writel(AIE_IOVA(AIE_ALIGN32(fdvt_fld_tree_forest00_cv_weight_size)),
-		fd->fd_base + FLD_CV_FORT_OFST);
+	if (!fd->is_shutdown) {
+		/* Set up kernel offset */
+		writel(AIE_IOVA(AIE_ALIGN32(fdvt_fld_fp_forest00_om45_size)),
+			fd->fd_base + FLD_FP_FORT_OFST);
+		writel(AIE_IOVA(AIE_ALIGN32(fdvt_fld_tree_forest00_tree_node_size)),
+			fd->fd_base + FLD_TR_FORT_OFST);
+		writel(AIE_IOVA(AIE_ALIGN32(fdvt_fld_leafnode_forest00_size)),
+			fd->fd_base + FLD_SH_FORT_OFST);
+		writel(AIE_IOVA(AIE_ALIGN32(fdvt_fld_tree_forest00_cv_weight_size)),
+			fd->fd_base + FLD_CV_FORT_OFST);
 
-	/* Model related configuration */
-	writel(0x00b0c80f, fd->fd_base + FLD_NUM_CONFIG_0);
+		/* Model related configuration */
+		writel(0x00b0c80f, fd->fd_base + FLD_NUM_CONFIG_0);
 
-	writel(0x6C004800, fd->fd_base + FLD_PCA_MEAN_SCALE_0);
-	writel(0x6c007c00, fd->fd_base + FLD_PCA_MEAN_SCALE_1);
-	writel(0x6c00b800, fd->fd_base + FLD_PCA_MEAN_SCALE_2);
-	writel(0x6c00ec00, fd->fd_base + FLD_PCA_MEAN_SCALE_3);
-	writel(0xb0009800, fd->fd_base + FLD_PCA_MEAN_SCALE_4);
-	writel(0xdc006800, fd->fd_base + FLD_PCA_MEAN_SCALE_5);
-	writel(0xdc00cc00, fd->fd_base + FLD_PCA_MEAN_SCALE_6);
+		writel(0x6C004800, fd->fd_base + FLD_PCA_MEAN_SCALE_0);
+		writel(0x6c007c00, fd->fd_base + FLD_PCA_MEAN_SCALE_1);
+		writel(0x6c00b800, fd->fd_base + FLD_PCA_MEAN_SCALE_2);
+		writel(0x6c00ec00, fd->fd_base + FLD_PCA_MEAN_SCALE_3);
+		writel(0xb0009800, fd->fd_base + FLD_PCA_MEAN_SCALE_4);
+		writel(0xdc006800, fd->fd_base + FLD_PCA_MEAN_SCALE_5);
+		writel(0xdc00cc00, fd->fd_base + FLD_PCA_MEAN_SCALE_6);
 
-	writel(0x00fdefd3, fd->fd_base + FLD_PCA_VEC_0);
-	writel(0x00fef095, fd->fd_base + FLD_PCA_VEC_1);
-	writel(0x00011095, fd->fd_base + FLD_PCA_VEC_2);
-	writel(0x00022fd3, fd->fd_base + FLD_PCA_VEC_3);
-	writel(0x000003e6, fd->fd_base + FLD_PCA_VEC_4);
-	writel(0x0000dfe9, fd->fd_base + FLD_PCA_VEC_5);
-	writel(0x00ff3fe9, fd->fd_base + FLD_PCA_VEC_6);
+		writel(0x00fdefd3, fd->fd_base + FLD_PCA_VEC_0);
+		writel(0x00fef095, fd->fd_base + FLD_PCA_VEC_1);
+		writel(0x00011095, fd->fd_base + FLD_PCA_VEC_2);
+		writel(0x00022fd3, fd->fd_base + FLD_PCA_VEC_3);
+		writel(0x000003e6, fd->fd_base + FLD_PCA_VEC_4);
+		writel(0x0000dfe9, fd->fd_base + FLD_PCA_VEC_5);
+		writel(0x00ff3fe9, fd->fd_base + FLD_PCA_VEC_6);
 
-	writel(0x00000008, fd->fd_base + FLD_CV_BIAS_FR_0);
-	writel(0x00000003, fd->fd_base + FLD_CV_BIAS_PF_0);
-	writel(0x0000b835, fd->fd_base + FLD_CV_RANGE_FR_0);
-	writel(0xFFFF5cba, fd->fd_base + FLD_CV_RANGE_FR_1);
-	writel(0x00005ed5, fd->fd_base + FLD_CV_RANGE_PF_0);
-	writel(0xFFFF910d, fd->fd_base + FLD_CV_RANGE_PF_1);
-	writel(0xe8242184, fd->fd_base + FLD_PP_COEF);
+		writel(0x00000008, fd->fd_base + FLD_CV_BIAS_FR_0);
+		writel(0x00000003, fd->fd_base + FLD_CV_BIAS_PF_0);
+		writel(0x0000b835, fd->fd_base + FLD_CV_RANGE_FR_0);
+		writel(0xFFFF5cba, fd->fd_base + FLD_CV_RANGE_FR_1);
+		writel(0x00005ed5, fd->fd_base + FLD_CV_RANGE_PF_0);
+		writel(0xFFFF910d, fd->fd_base + FLD_CV_RANGE_PF_1);
+		writel(0xe8242184, fd->fd_base + FLD_PP_COEF);
 
-	writel(0x00000001, fd->fd_base + FLD_BS_CONFIG0);
-	writel(0x0000031e, fd->fd_base + FLD_BS_CONFIG1);
-	writel(0xfffffcae, fd->fd_base + FLD_BS_CONFIG2);
+		writel(0x00000001, fd->fd_base + FLD_BS_CONFIG0);
+		writel(0x0000031e, fd->fd_base + FLD_BS_CONFIG1);
+		writel(0xfffffcae, fd->fd_base + FLD_BS_CONFIG2);
+	}
 
 }
 
@@ -5311,11 +5463,19 @@ static void aie_dump_cg_reg(struct mtk_aie_dev *fd)
 	void __iomem *top_ck_gen_reg = fd->reg_base[3];
 	void __iomem *apmixedsys_clk_reg = fd->reg_base[4];
 
+	if (fd->is_shutdown) {
+		aie_dev_info(fd->dev, "%s: skip for shutdown", __func__);
+		return;
+	}
+
 	aie_dev_info(fd->dev, "Dump AIE CG/PG:\n");
 
-	if (isp_main_reg != NULL)
+	if (isp_main_reg != NULL) {
 		aie_dev_info(fd->dev, "[0x15000000] 0x%08X\n",
 			(unsigned int)ioread32((void *)(isp_main_reg)));
+		aie_dev_info(fd->dev, "[0x15000050] 0x%08X\n",
+			(unsigned int)ioread32((void *)(isp_main_reg + 0x50)));
+	}
 
 	if (isp_vcore_reg != NULL)
 		aie_dev_info(fd->dev, "[0x15780000] 0x%08X\n",

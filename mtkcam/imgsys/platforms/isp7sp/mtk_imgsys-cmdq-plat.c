@@ -43,6 +43,7 @@
 #define IMGSYS_SMIDUMP_QOF_DIP	(BIT(1))
 
 #define IMGSYS_QOS_SYNC_OWNER	(0x412d454d5f53)
+#define IMGSYS_QOS_SYNC_VRP1	(0x000031707276)
 #define IMGSYS_QOS_MAX_PERF	(MTK_MMQOS_MAX_SMI_FREQ_BW >> 1)
 
 #if CMDQ_CB_KTHREAD
@@ -209,6 +210,8 @@ void imgsys_cmdq_streamon_plat7sp(struct mtk_imgsys_dev *imgsys_dev)
 	for (idx = IMGSYS_CMDQ_SYNC_TOKEN_IMGSYS_START;
 		idx <= IMGSYS_CMDQ_SYNC_TOKEN_IMGSYS_END; idx++)
 		cmdq_clear_event(imgsys_clt[0]->chan, imgsys_event[idx].event);
+
+	cmdq_mbox_disable(imgsys_clt[0]->chan);
 
 	MTK_IMGSYS_QOF_NEED_RUN(imgsys_dev->qof_ver, mtk_imgsys_cmdq_qof_streamon(imgsys_dev));
 
@@ -936,6 +939,8 @@ void imgsys_cmdq_task_cb_plat7sp(struct cmdq_cb_data data)
 	u32 event_val = 0L;
 	bool isHWhang = 0;
 	bool isQOFhang = 0;
+	bool isHwDone = 1;
+	bool isGPRtimeout = 0;
 #ifdef IMGSYS_ME_CHECK_FUNC_EN
 	u32 me_done_reg = 0;
 	u32 me_check_reg[4] = {0};
@@ -973,7 +978,7 @@ void imgsys_cmdq_task_cb_plat7sp(struct cmdq_cb_data data)
 				me_check_reg[2], me_check_reg[3]);
 			if (((me_check_reg[0] & 0x0000000F) == 0x0000000B)
 			&& (me_check_reg[1] == 0x00000008)
-			&& ((me_check_reg[2] & 0xFF000000) == 0x18000000)
+			&& (((me_check_reg[2] & 0xFF000000) == 0x18000000) || ((me_check_reg[2] & 0xFF000000) == 0x00000000))
 			&& ((me_check_reg[3] & 0xFF000000) == 0x4A000000)) {
 				if (imgsys_dev->modules[IMGSYS_MOD_ME].set) {
 					imgsys_dev->modules[IMGSYS_MOD_ME].set(imgsys_dev);
@@ -1202,15 +1207,19 @@ void imgsys_cmdq_task_cb_plat7sp(struct cmdq_cb_data data)
 
 		} else if ((event >= IMGSYS_CMDQ_QOF_EVENT_BEGIN) &&
 			(event <= IMGSYS_CMDQ_QOF_EVENT_END)) {
+			dma_addr_t err_pc;
 			isQOFhang = 1;
 			pr_info(
 				"%s: [ERROR] QOF event timeout! wfe(%d) event(%d) isQOF(%d)",
 				__func__,
 				cb_param->pkt->err_data.wfe_timeout,
 				cb_param->pkt->err_data.event, isQOFhang);
+			err_pc = cmdq_pkt_get_pa_by_offset(cb_param->pkt, cb_param->pkt->err_data.offset);
+			cmdq_pkt_dump_buf(cb_param->pkt, err_pc);
 		} else if ((event >= IMGSYS_CMDQ_GPR_EVENT_BEGIN) &&
 			(event <= IMGSYS_CMDQ_GPR_EVENT_END)) {
 			isHWhang = 1;
+			isGPRtimeout = 1;
 			pr_info(
 				"%s: [ERROR] GPR event timeout! wfe(%d) event(%d) isHW(%d)",
 				__func__,
@@ -1251,10 +1260,83 @@ void imgsys_cmdq_task_cb_plat7sp(struct cmdq_cb_data data)
 			}
 		}
 
-		if ((isHWhang | isQOFhang) && mtk_imgsys_cmdq_qof_get_pwr_status(ISP7SP_ISP_TRAW))
-			mtk_smi_dbg_dump_for_isp_fast(IMGSYS_SMIDUMP_QOF_TRAW);
-		if ((isHWhang | isQOFhang) && mtk_imgsys_cmdq_qof_get_pwr_status(ISP7SP_ISP_DIP))
-			mtk_smi_dbg_dump_for_isp_fast(IMGSYS_SMIDUMP_QOF_DIP);
+		if (isGPRtimeout) {
+			if (cb_param->hw_comb & (IMGSYS_ENG_WPE_EIS|IMGSYS_ENG_WPE_TNR|IMGSYS_ENG_WPE_LITE)) {
+				idx = IMGSYS_MOD_WPE;
+				if (imgsys_dev->modules[idx].done_chk) {
+					isHwDone = imgsys_dev->modules[idx].done_chk(imgsys_dev,
+						cb_param->hw_comb);
+					if(!isHwDone) {
+						aee_kernel_exception("CRDISPATCH_KEY:IMGSYS_WPE",
+						"DISPATCH:IMGSYS_WPE poll done fail, hwcomb:0x%x",
+						cb_param->hw_comb);
+					}
+				}
+			}
+			if (isHwDone && (cb_param->hw_comb & (IMGSYS_ENG_TRAW|IMGSYS_ENG_LTR))) {
+				idx = IMGSYS_MOD_TRAW;
+				if (imgsys_dev->modules[idx].done_chk) {
+					isHwDone = imgsys_dev->modules[idx].done_chk(imgsys_dev,
+						cb_param->hw_comb);
+					if(!isHwDone) {
+						aee_kernel_exception("CRDISPATCH_KEY:IMGSYS_TRAW",
+						"DISPATCH:IMGSYS_TRAW poll done fail, hwcomb:0x%x",
+						cb_param->hw_comb);
+					}
+				}
+			}
+			if (isHwDone && (cb_param->hw_comb & IMGSYS_ENG_DIP)) {
+				idx = IMGSYS_MOD_DIP;
+				if (imgsys_dev->modules[idx].done_chk) {
+					isHwDone = imgsys_dev->modules[idx].done_chk(imgsys_dev,
+						cb_param->hw_comb);
+					if(!isHwDone) {
+						aee_kernel_exception("CRDISPATCH_KEY:IMGSYS_DIP",
+						"DISPATCH:IMGSYS_DIP poll done fail, hwcomb:0x%x",
+						cb_param->hw_comb);
+				}
+				}
+			}
+			if (isHwDone && (cb_param->hw_comb & (IMGSYS_ENG_PQDIP_A|IMGSYS_ENG_PQDIP_B))) {
+				idx = IMGSYS_MOD_PQDIP;
+				if (imgsys_dev->modules[idx].done_chk) {
+					isHwDone = imgsys_dev->modules[idx].done_chk(imgsys_dev,
+						cb_param->hw_comb);
+					if(!isHwDone) {
+						aee_kernel_exception("CRDISPATCH_KEY:IMGSYS_PQDIP",
+						"DISPATCH:IMGSYS_PQDIP poll done fail, hwcomb:0x%x",
+						cb_param->hw_comb);
+					}
+				}
+			}
+			if (isHwDone && (cb_param->hw_comb & IMGSYS_ENG_ME)) {
+				idx = IMGSYS_MOD_ME;
+				if (imgsys_dev->modules[idx].done_chk) {
+					isHwDone = imgsys_dev->modules[idx].done_chk(imgsys_dev,
+						cb_param->hw_comb);
+					if(!isHwDone) {
+						aee_kernel_exception("CRDISPATCH_KEY:IMGSYS_ME",
+							"DISPATCH:IMGSYS_ME poll done fail, hwcomb:0x%x",
+							cb_param->hw_comb);
+					}
+				}
+			}
+			/* Polling timeout but all modules are done */
+			if (isHwDone) {
+				aee_kernel_exception("CRDISPATCH_KEY:IMGSYS",
+					"DISPATCH:IMGSYS poll done fail, hwcomb:0x%x",
+					cb_param->hw_comb);
+			}
+		}
+
+		if (isHWhang | isQOFhang) {
+			if (mtk_imgsys_cmdq_qof_get_pwr_status(ISP7SP_ISP_TRAW))
+				mtk_smi_dbg_dump_for_isp_fast(IMGSYS_SMIDUMP_QOF_TRAW);
+			if (mtk_imgsys_cmdq_qof_get_pwr_status(ISP7SP_ISP_DIP))
+				mtk_smi_dbg_dump_for_isp_fast(IMGSYS_SMIDUMP_QOF_DIP);
+
+			mtk_imgsys_cmdq_qof_dump(cb_param->hw_comb, true);
+		}
 	}
 	cb_param->cmdqTs.tsCmdqCbEnd = ktime_get_boottime_ns()/1000;
 
@@ -1278,6 +1360,7 @@ int imgsys_cmdq_task_aee_cb_plat7sp(struct cmdq_cb_data data)
 	u64 event_diff = 0;
 	bool isHWhang = 0;
 	enum cmdq_aee_type ret = CMDQ_NO_AEE;
+	bool isGPRtimeout = 0;
 
 	pkt = (struct cmdq_pkt *)data.data;
 	cb_param = pkt->user_priv;
@@ -1506,8 +1589,9 @@ int imgsys_cmdq_task_aee_cb_plat7sp(struct cmdq_cb_data data)
 	} else if ((event >= IMGSYS_CMDQ_GPR_EVENT_BEGIN) &&
 		(event <= IMGSYS_CMDQ_GPR_EVENT_END)) {
 		isHWhang = 1;
+		isGPRtimeout = 1;
 		pkt->timeout_dump_hw_trace = 1;
-		ret = CMDQ_AEE_EXCEPTION;
+		ret = CMDQ_NO_AEE_DUMP;
 		pr_info(
 			"%s: [ERROR] GPR event timeout! wfe(%d) event(%d) isHW(%d)",
 			__func__,
@@ -2160,22 +2244,75 @@ int imgsys_cmdq_parser_plat7sp(struct mtk_imgsys_dev *imgsys_dev,
 			break;
 #endif
 		case IMGSYS_CMD_POLL:
-            if (imgsys_cmdq_dbg_enable_plat7sp()) {
-			pr_debug(
-				"%s: POLL with addr(0x%08x) value(0x%08x) mask(0x%08x) thd(%d)\n",
-				__func__, cmd->u.address, cmd->u.value, cmd->u.mask, thd_idx);
-            }
 			/* cmdq_pkt_poll(pkt, NULL, cmd->u.value, cmd->u.address, */
 			/* cmd->u.mask, CMDQ_GPR_R15); */
+		{
+			u32 addr_msb = (cmd->u.address >> 16);
+			u32 gpr_idx = 0;
+			switch (addr_msb) {
+				case 0x1510:
+				case 0x1515:
+				case 0x1516:
+					/* DIP */
+					gpr_idx = 0;
+					break;
+				case 0x1570:
+					/* TRAW */
+					gpr_idx = 1;
+					break;
+				case 0x1504:
+					/* LTRAW */
+					gpr_idx = 2;
+					break;
+				case 0x1520:
+					/* WPE_EIS */
+					gpr_idx = 3;
+					break;
+				case 0x1550:
+					/* WPE_TNR */
+					gpr_idx = 4;
+					break;
+				case 0x1560:
+					/* WPE_LITE */
+					gpr_idx = 5;
+					break;
+				case 0x1521:
+					/* PQDIP_A */
+					gpr_idx = 6;
+					break;
+				case 0x1551:
+					/* PQDIP_B */
+					gpr_idx = 7;
+					break;
+				case 0x1532:
+				case 0x1533:
+					/* ME/MMG */
+					gpr_idx = 8;
+					break;
+				default:
+					gpr_idx = thd_idx;
+					break;
+			}
+			if (imgsys_cmdq_dbg_enable_plat7sp()) {
+				pr_debug(
+					"%s: POLL with addr(0x%08x) value(0x%08x) mask(0x%08x) addr_msb(0x%08x) thd(%d/%d)\n",
+					__func__, cmd->u.address, cmd->u.value, cmd->u.mask, addr_msb, gpr_idx, thd_idx);
+			}
 			#ifdef IMGSYS_ME_CHECK_FUNC_EN
-			cmdq_pkt_poll_timeout(pkt, cmd->u.value, SUBSYS_NO_SUPPORT,
-				cmd->u.address, cmd->u.mask, IMGSYS_POLL_TIME_30MS,
-				CMDQ_GPR_R03+thd_idx);
+			if ((gpr_idx == 8) && (hw_comb == 0x800))
+				cmdq_pkt_poll_timeout(pkt, cmd->u.value, SUBSYS_NO_SUPPORT,
+					cmd->u.address, cmd->u.mask, IMGSYS_POLL_TIME_30MS,
+					CMDQ_GPR_R03+gpr_idx);
+			else
+				cmdq_pkt_poll_timeout(pkt, cmd->u.value, SUBSYS_NO_SUPPORT,
+					cmd->u.address, cmd->u.mask, IMGSYS_POLL_TIME_INFINI,
+					CMDQ_GPR_R03+gpr_idx);
 			#else
 			cmdq_pkt_poll_timeout(pkt, cmd->u.value, SUBSYS_NO_SUPPORT,
 				cmd->u.address, cmd->u.mask, IMGSYS_POLL_TIME_INFINI,
-				CMDQ_GPR_R03+thd_idx);
+				CMDQ_GPR_R03+gpr_idx);
 			#endif
+		}
 			break;
 		case IMGSYS_CMD_WAIT:
             if (imgsys_cmdq_dbg_enable_plat7sp()) {
@@ -2485,6 +2622,7 @@ void mtk_imgsys_mmdvfs_init_plat7sp(struct mtk_imgsys_dev *imgsys_dev)
 	dvfs_info->cur_freq_smi = 0;
 	dvfs_info->vss_task_cnt = 0;
 	dvfs_info->smvr_task_cnt = 0;
+	dvfs_info->vr_task_cnt = 0;
 	dvfs_info->opp_num = opp_num;
 
 }
@@ -2685,6 +2823,7 @@ void mtk_imgsys_mmdvfs_reset_plat7sp(struct mtk_imgsys_dev *imgsys_dev)
 	dvfs_info->cur_freq_smi = freq;
 	dvfs_info->vss_task_cnt = 0;
 	dvfs_info->smvr_task_cnt = 0;
+	dvfs_info->vr_task_cnt = 0;
 }
 
 void mtk_imgsys_mmqos_init_plat7sp(struct mtk_imgsys_dev *imgsys_dev)
@@ -2910,7 +3049,9 @@ void mtk_imgsys_mmqos_set_by_scen_plat7sp(struct mtk_imgsys_dev *imgsys_dev,
 			frame_duration = 1000 / (fps << 1);
 			cur_interval = (ktime_get_boottime_ns()/1000000) - qos_info->time_prev_req;
 
-			if (frm_info->frm_owner == IMGSYS_QOS_SYNC_OWNER && sidx == 0 &&
+			if ( (frm_info->frm_owner == IMGSYS_QOS_SYNC_OWNER ||
+			    (frm_info->frm_owner & IMGSYS_QOS_SYNC_VRP1) ==
+			    IMGSYS_QOS_SYNC_VRP1) && sidx == 0 &&
 			    frm_info->frame_no == 0) {
 				qos_info->req_cnt = 0;
 				qos_info->avg_cnt = 0;
@@ -2963,9 +3104,18 @@ void mtk_imgsys_mmqos_set_by_scen_plat7sp(struct mtk_imgsys_dev *imgsys_dev,
 					qos_info->qos_path[IMGSYS_COMMON_1_R].bw = bw_final[2];
 					qos_info->qos_path[IMGSYS_COMMON_1_W].bw = bw_final[3];
 
-					bw_final[0] = (bw_final[0] * imgsys_qos_factor) >> 2;
+					if (dvfs_info->pix_mode != 1)
+						bw_final[0] = (bw_final[0] * imgsys_qos_factor) >> 2;
+					else
+						bw_final[0] = (bw_final[0] * 12) >> 3;
+
 					bw_final[1] = (bw_final[1] * imgsys_qos_factor) >> 2;
-					bw_final[2] = (bw_final[2] * imgsys_qos_factor) >> 2;
+
+					if (dvfs_info->pix_mode != 1)
+						bw_final[2] = (bw_final[2] * imgsys_qos_factor) >> 2;
+					else
+						bw_final[2] = (bw_final[2] * 12) >> 3;
+
 					bw_final[3] = (bw_final[3] * imgsys_qos_factor) >> 2;
 
 					if (imgsys_qos_dbg_enable_plat7sp())
@@ -3061,6 +3211,7 @@ void mtk_imgsys_mmdvfs_mmqos_cal_plat7sp(struct mtk_imgsys_dev *imgsys_dev,
 	#if IMGSYS_DVFS_ENABLE
 	unsigned long pixel_max = 0, pixel_total_max = 0;
 	unsigned long smvr_size = 0, smvr_freq_floor = 0;
+	unsigned long vr_size = 0, vr_freq_floor = 0;
 	/* struct timeval curr_time; */
 	u64 ts_fps = 0;
 	#endif
@@ -3086,6 +3237,10 @@ void mtk_imgsys_mmdvfs_mmqos_cal_plat7sp(struct mtk_imgsys_dev *imgsys_dev,
 			if ((batch_num > 1) &&
 				(frm_info->user_info[frm_idx].hw_comb & IMGSYS_ENG_ME))
 				smvr_size = frm_info->user_info[frm_idx].pixel_bw;
+			/* Using F0 for VR size check */
+			else if ((frm_info->user_info[frm_idx].hw_comb & IMGSYS_VR_F0_HW_COMB) ==
+					IMGSYS_VR_F0_HW_COMB)
+				vr_size = frm_info->user_info[frm_idx].pixel_bw;
 		}
 	}
 	#if IMGSYS_DVFS_ENABLE
@@ -3139,8 +3294,23 @@ void mtk_imgsys_mmdvfs_mmqos_cal_plat7sp(struct mtk_imgsys_dev *imgsys_dev,
 					freq = smvr_freq_floor;
 				else
 					freq = pixel_total_max;
-			} else if (dvfs_info->smvr_task_cnt == 0)
-				freq = pixel_total_max;
+			} else if (dvfs_info->smvr_task_cnt == 0) {
+				if (dvfs_info->pix_mode == 1) {
+					if ((fps >= IMGSYS_VR_FPS_FLOOR1) &&
+						(vr_size >= IMGSYS_VR_SIZE_FLOOR1)) {
+						dvfs_info->vr_task_cnt++;
+						vr_freq_floor = IMGSYS_VR_FREQ_FLOOR1;
+					} else if (dvfs_info->vr_task_cnt > 0)
+						vr_freq_floor = dvfs_info->freq;
+					else
+						vr_freq_floor = 0;
+					if (pixel_total_max < vr_freq_floor)
+						freq = vr_freq_floor;
+					else
+						freq = pixel_total_max;
+				} else
+					freq = pixel_total_max;
+			}
 
 			if (dvfs_info->vss_task_cnt == 0)
 				dvfs_info->freq = freq;
@@ -3190,8 +3360,24 @@ void mtk_imgsys_mmdvfs_mmqos_cal_plat7sp(struct mtk_imgsys_dev *imgsys_dev,
 					freq = smvr_freq_floor;
 				else
 					freq = pixel_total_max;
-			} else if (dvfs_info->smvr_task_cnt == 0)
-				freq = pixel_total_max;
+			} else if (dvfs_info->smvr_task_cnt == 0) {
+				if (dvfs_info->pix_mode == 1) {
+					if ((fps >= IMGSYS_VR_FPS_FLOOR1) &&
+						(vr_size >= IMGSYS_VR_SIZE_FLOOR1)) {
+						dvfs_info->vr_task_cnt--;
+						vr_freq_floor = IMGSYS_VR_FREQ_FLOOR1;
+					}
+					if (dvfs_info->vr_task_cnt > 0)
+						vr_freq_floor = dvfs_info->freq;
+					else
+						vr_freq_floor = 0;
+					if (pixel_total_max < vr_freq_floor)
+						freq = vr_freq_floor;
+					else
+						freq = pixel_total_max;
+				} else
+					freq = pixel_total_max;
+			}
 
 			if (dvfs_info->vss_task_cnt == 0)
 				dvfs_info->freq = freq;
@@ -3214,10 +3400,11 @@ void mtk_imgsys_mmdvfs_mmqos_cal_plat7sp(struct mtk_imgsys_dev *imgsys_dev,
 
 	if (imgsys_dvfs_dbg_enable_plat7sp())
 		dev_info(qos_info->dev,
-		"[%s] isSet(%d) fps(%d/%d/%d) batchNum(%d) bw_exe(%d) vss(%d) smvr(%d/%lu/%lu) freq(%lu/%lu) local_pix_sz(%lu/%lu/%lu/%lu) global_pix_sz(%lu/%lu/%lu/%lu)\n",
+		"[%s] isSet(%d) fps(%d/%d/%d) batchNum(%d) bw_exe(%d) vss(%d) smvr(%d/%lu/%lu) vr(%d/%lu/%lu) freq(%lu/%lu) local_pix_sz(%lu/%lu/%lu/%lu) global_pix_sz(%lu/%lu/%lu/%lu)\n",
 		__func__, isSet, fps, frm_info->fps, fps_smvr, batch_num, bw_exe,
 		dvfs_info->vss_task_cnt, dvfs_info->smvr_task_cnt, smvr_size,
-		smvr_freq_floor, freq, dvfs_info->freq,
+		smvr_freq_floor, dvfs_info->vr_task_cnt, vr_size,
+		vr_freq_floor, freq, dvfs_info->freq,
 		pixel_size[0], pixel_size[1], pixel_size[2], pixel_max,
 		dvfs_info->pixel_size[0], dvfs_info->pixel_size[1],
 		dvfs_info->pixel_size[2], pixel_total_max
@@ -3294,6 +3481,8 @@ void mtk_imgsys_power_ctrl_plat7sp(struct mtk_imgsys_dev *imgsys_dev, bool isPow
 					__func__, isPowerOn, user_cnt);
 
 			mutex_lock(&(imgsys_dev->power_ctrl_lock));
+
+			cmdq_mbox_enable(imgsys_clt[0]->chan);
 
 			pm_runtime_get_sync(imgsys_dev->dev);
 

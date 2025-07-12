@@ -23,6 +23,9 @@
 #include <linux/media.h>
 #include <linux/jiffies.h>
 
+#include <soc/mediatek/smi.h>
+#include <mtk-smi-dbg.h>
+
 #include <media/videobuf2-v4l2.h>
 #include <media/v4l2-event.h>
 #include <media/v4l2-fwnode.h>
@@ -47,14 +50,18 @@
 #include "mtk_cam-hsf.h"
 #include "iommu_debug.h"
 
-static unsigned int debug_sensor_meta_dump = 1;
+static unsigned int debug_sensor_meta_dump = 0;
 module_param(debug_sensor_meta_dump, uint, 0644);
 MODULE_PARM_DESC(debug_sensor_meta_dump, "activates sensor meta dump");
 
 #define CAM_DEBUG 0
 #define ENABLE_CCU
+#define CAMSV_DEVICE_FULL_SET_NUM 6
 
 static const struct of_device_id mtk_cam_of_ids[] = {
+#ifdef CAMSYS_ISP7SP_MT6878
+	{.compatible = "mediatek,mt6878-camisp", .data = &mt6878_data},
+#endif
 #ifdef CAMSYS_ISP7SP_MT6897
 	{.compatible = "mediatek,mt6897-camisp", .data = &mt6897_data},
 #endif
@@ -368,7 +375,7 @@ static int mtk_cam_req_try_update_used_ctx(struct media_request *req)
 			continue;
 
 		ctx = mtk_cam_find_ctx(cam, &ppls->raw[i].subdev.entity);
-		if (!ctx) {
+		if (!ctx || !atomic_read(&ctx->streaming)) {
 			/* not all pipes are stream-on */
 			not_streamon_yet = true;
 			break;
@@ -384,7 +391,7 @@ static int mtk_cam_req_try_update_used_ctx(struct media_request *req)
 			continue;
 
 		ctx = mtk_cam_find_ctx(cam, &ppls->camsv[i].subdev.entity);
-		if (!ctx) {
+		if (!ctx || !atomic_read(&ctx->streaming)) {
 			/* not all pipes are stream-on */
 			not_streamon_yet = true;
 			break;
@@ -400,7 +407,7 @@ static int mtk_cam_req_try_update_used_ctx(struct media_request *req)
 			continue;
 
 		ctx = mtk_cam_find_ctx(cam, &ppls->mraw[i].subdev.entity);
-		if (!ctx) {
+		if (!ctx || !atomic_read(&ctx->streaming)) {
 			/* not all pipes are stream-on */
 			not_streamon_yet = true;
 			break;
@@ -593,6 +600,12 @@ static void mtk_cam_store_pipe_data_to_ctx(
 
 	data = &req->raw_data[raw_pipe_idx];
 	ctx->ctrldata = data->ctrl;
+
+	if (!ctx->ctrldata_stored) {
+		ctx->enable_luma_dump = CAM_DEBUG_ENABLED(AA) ||
+			ctx->ctrldata.resource.user_data.raw_res.luma_debug;
+	}
+
 	ctx->ctrldata_stored = true;
 }
 
@@ -1242,6 +1255,8 @@ static int mtk_cam_uninitialize(struct mtk_cam_device *cam)
 	mtk_cam_power_rproc(cam, 0);
 	pm_runtime_put_sync(cam->dev);
 
+	wake_up(&cam->shutdown_wq);
+
 	return 0;
 }
 
@@ -1814,7 +1829,7 @@ static void mtk_cam_ctx_release_slb(struct mtk_cam_ctx *ctx)
 	if (ctx->slb_iova) {
 		struct device *dma_dev;
 
-		dma_dev = ctx->cam->engines.raw_devs[0];
+		dma_dev = ctx->cam->smmu_dev;
 		dma_unmap_resource(dma_dev, ctx->slb_iova, ctx->slb_size,
 				   DMA_BIDIRECTIONAL, 0);
 	}
@@ -2565,6 +2580,10 @@ int mtk_cam_ctx_init_scenario(struct mtk_cam_ctx *ctx)
 	} else if (ctrl_data->valid_apu_info &&
 		   scen_is_m2m_apu(scen, &ctrl_data->apu_info)) {
 
+		if (!GET_PLAT_HW(apu_support))
+			dev_info(cam->dev, "%s: do not support APU hardware path\n",
+				__func__);
+
 		ret = mtk_cam_ctx_request_slb(ctx, UID_SH_P1, false, NULL);
 
 	} else if (res_raw_is_dc_mode(res) && res->slb_size) {
@@ -2687,7 +2706,7 @@ int ctx_stream_on_seninf_sensor(struct mtk_cam_job *job,
 		for (seninf_pad = PAD_SRC_RAW0, i = 0;
 			  seninf_pad <= PAD_SRC_RAW2; ++seninf_pad, ++i)
 			if (seninf_pad_bitmask & 1 << seninf_pad) {
-				mtk_cam_seninf_set_camtg(seninf, seninf_pad, raw_tg_idx + i);
+				mtk_cam_seninf_set_camtg(seninf, seninf_pad, raw_tg_idx);
 				mtk_cam_seninf_set_pixelmode(seninf, seninf_pad, 3);
 			}
 	}
@@ -2850,6 +2869,42 @@ void mtk_cam_ctx_engine_off(struct mtk_cam_ctx *ctx)
 	if (ctx->set_adl_aid) {
 		mtk_cam_hsf_aid(ctx, 0, AID_VAINR, ctx->used_engine);
 		ctx->set_adl_aid = 0;
+	}
+}
+
+/* note: only raw switch using */
+void mtk_cam_ctx_engine_enable_irq(struct mtk_cam_ctx *ctx)
+{
+	struct mtk_cam_device *cam;
+	struct mtk_raw_device *raw_dev;
+	struct mtk_yuv_device *yuv_dev;
+	struct mtk_camsv_device *sv_dev;
+	struct mtk_mraw_device *mraw_dev;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(ctx->hw_raw); i++) {
+		if (ctx->hw_raw[i]) {
+			raw_dev = dev_get_drvdata(ctx->hw_raw[i]);
+			enable_irq(raw_dev->irq);
+
+			cam = raw_dev->cam;
+			yuv_dev = dev_get_drvdata(
+				cam->engines.yuv_devs[raw_dev->id]);
+			enable_irq(yuv_dev->irq);
+		}
+	}
+
+	if (ctx->hw_sv) {
+		sv_dev = dev_get_drvdata(ctx->hw_sv);
+		for (i = 0; i < ARRAY_SIZE(sv_dev->irq); i++)
+			enable_irq(sv_dev->irq[i]);
+	}
+
+	for (i = 0; i < ARRAY_SIZE(ctx->hw_mraw); i++) {
+		if (ctx->hw_mraw[i]) {
+			mraw_dev = dev_get_drvdata(ctx->hw_mraw[i]);
+			enable_irq(mraw_dev->irq);
+		}
 	}
 }
 
@@ -3453,7 +3508,7 @@ static struct component_match *mtk_cam_match_add(struct device *dev)
 	struct mtk_cam_device *cam_dev = dev_get_drvdata(dev);
 	struct mtk_cam_engines *eng = &cam_dev->engines;
 	struct component_match *match = NULL;
-	int yuv_num, rms_num;
+	int yuv_num, rms_num, camsv_real_hw_num;
 
 	eng->num_raw_devices =
 		add_match_by_driver(dev, &match, &mtk_cam_raw_driver);
@@ -3465,8 +3520,11 @@ static struct component_match *mtk_cam_match_add(struct device *dev)
 	eng->num_larb_devices =
 		add_match_by_driver(dev, &match, &mtk_cam_larb_driver);
 
-	eng->num_camsv_devices =
+	camsv_real_hw_num =
 		add_match_by_driver(dev, &match, &mtk_cam_sv_driver);
+
+	eng->num_camsv_devices =
+		CAMSV_DEVICE_FULL_SET_NUM;
 
 	eng->num_mraw_devices =
 		add_match_by_driver(dev, &match, &mtk_cam_mraw_driver);
@@ -3480,7 +3538,7 @@ static struct component_match *mtk_cam_match_add(struct device *dev)
 	dev_info(dev, "#: raw %d yuv %d rms %d larb %d, sv %d, seninf %d, mraw %d\n",
 		 eng->num_raw_devices, yuv_num, rms_num,
 		 eng->num_larb_devices,
-		 eng->num_camsv_devices,
+		 camsv_real_hw_num,
 		 eng->num_seninf_devices,
 		 eng->num_mraw_devices);
 
@@ -3810,50 +3868,50 @@ static int register_sub_drivers(struct device *dev)
 
 	ret = platform_driver_register(&mtk_cam_larb_driver);
 	if (ret) {
-		dev_info(dev, "%s mtk_cam_larb_driver fail\n", __func__);
+		dev_err(dev, "%s mtk_cam_larb_driver fail\n", __func__);
 		goto REGISTER_LARB_FAIL;
 	}
 
 	ret = platform_driver_register(&seninf_pdrv);
 	if (ret) {
-		dev_info(dev, "%s seninf_pdrv fail\n", __func__);
+		dev_err(dev, "%s seninf_pdrv fail\n", __func__);
 		goto REGISTER_SENINF_FAIL;
 	}
 
 	ret = platform_driver_register(&seninf_core_pdrv);
 	if (ret) {
-		dev_info(dev, "%s seninf_core_pdrv fail\n", __func__);
+		dev_err(dev, "%s seninf_core_pdrv fail\n", __func__);
 		goto REGISTER_SENINF_CORE_FAIL;
 	}
 
 
 	ret = platform_driver_register(&mtk_cam_sv_driver);
 	if (ret) {
-		dev_info(dev, "%s mtk_cam_sv_driver fail\n", __func__);
+		dev_err(dev, "%s mtk_cam_sv_driver fail\n", __func__);
 		goto REGISTER_CAMSV_FAIL;
 	}
 
 	ret = platform_driver_register(&mtk_cam_mraw_driver);
 	if (ret) {
-		dev_info(dev, "%s mtk_cam_mraw_driver fail\n", __func__);
+		dev_err(dev, "%s mtk_cam_mraw_driver fail\n", __func__);
 		goto REGISTER_MRAW_FAIL;
 	}
 
 	ret = platform_driver_register(&mtk_cam_raw_driver);
 	if (ret) {
-		dev_info(dev, "%s mtk_cam_raw_driver fail\n", __func__);
+		dev_err(dev, "%s mtk_cam_raw_driver fail\n", __func__);
 		goto REGISTER_RAW_FAIL;
 	}
 
 	ret = platform_driver_register(&mtk_cam_yuv_driver);
 	if (ret) {
-		dev_info(dev, "%s mtk_cam_raw_driver fail\n", __func__);
+		dev_err(dev, "%s mtk_cam_raw_driver fail\n", __func__);
 		goto REGISTER_YUV_FAIL;
 	}
 
 	ret = platform_driver_register(&mtk_cam_rms_driver);
 	if (ret) {
-		dev_info(dev, "%s mtk_cam_rms_driver fail\n", __func__);
+		dev_err(dev, "%s mtk_cam_rms_driver fail\n", __func__);
 		goto REGISTER_RMS_FAIL;
 	}
 
@@ -3909,9 +3967,44 @@ static irqreturn_t mtk_irq_adlrd(int irq, void *data)
 
 	irq_status = readl_relaxed(drvdata->adl_base + 0x18a0);
 
-	dev_dbg(dev, "ADL-INT: INT 0x%x\n", irq_status);
+	dev_info(dev, "ADL-INT: INT 0x%x\n", irq_status);
 
 	return IRQ_HANDLED;
+}
+
+static int mtk_cam_mminfra_dbg_cb(struct notifier_block *nb,
+			unsigned long value, void *data)
+{
+	struct mtk_cam_device *cam =
+			container_of(nb, struct mtk_cam_device, mminfra_dbg_cb);
+	struct mtk_raw_device *raw;
+	int i, ret = 0, hsf_en = 0;
+	struct mtk_cam_ctx *ctx;
+
+	if (atomic_read(&cam->initialize_cnt) == 0) {
+		dev_info(cam->dev, "cam device may off(%d)\n", ret);
+		return 0;
+	}
+	for (i = 0; i < cam->max_stream_num; i++) {
+		ctx = &cam->ctxs[i];
+		hsf_en += ctx->enable_hsf_raw;
+	}
+
+	for (i = 0; i < cam->engines.num_raw_devices; i++) {
+		raw = dev_get_drvdata(cam->engines.raw_devs[i]);
+
+		ret = pm_runtime_get_if_in_use(raw->dev);
+		if (ret <= 0) {
+			dev_info(cam->dev, "raw-%d may off(%d)\n", i, ret);
+			continue;
+		}
+		if (hsf_en == 0)
+			raw_dump_dma_status(raw);
+
+		pm_runtime_put_sync(raw->dev);
+	}
+
+	return 0;
 }
 
 static int mtk_cam_probe(struct platform_device *pdev)
@@ -3927,7 +4020,8 @@ static int mtk_cam_probe(struct platform_device *pdev)
 	//dev_info(dev, "%s\n", __func__);
 	platform_data = of_device_get_match_data(dev);
 	if (!platform_data) {
-		dev_info(dev, "Error: failed to get match data\n");
+		dev_err(dev, "%s: of_device_get_match_data failed\n", __func__);
+		WRAP_AEE_EXCEPTION("mtk_cam_probe", "Get Match Data");
 		return -ENODEV;
 	}
 	set_platform_data(platform_data);
@@ -3937,66 +4031,76 @@ static int mtk_cam_probe(struct platform_device *pdev)
 
 	/* initialize structure */
 	cam_dev = devm_kzalloc(dev, sizeof(*cam_dev), GFP_KERNEL);
-	if (!cam_dev)
+	if (!cam_dev) {
+		dev_err(dev, "%s: kzalloc cam_dev failed\n", __func__);
+		WRAP_AEE_EXCEPTION("mtk_cam_probe", "Kzalloc");
 		return -ENOMEM;
+	}
 
 	if (smmu_v3_enabled()) {
 		cam_dev->smmu_dev = mtk_smmu_get_shared_device(&pdev->dev);
 		if (!cam_dev->smmu_dev) {
-			dev_info(dev, "failed to get smmu device\n");
+			dev_err(dev, "%s: Get SMMU Device failed\n", __func__);
+			WRAP_AEE_EXCEPTION("mtk_cam_probe", "Get SMMU Device");
 			return -ENODEV;
 		}
 	}
 
 	alloc_dev = cam_dev->smmu_dev ? : dev;
 	if (dma_set_mask_and_coherent(alloc_dev, DMA_BIT_MASK(34)))
-		dev_info(dev, "%s: No suitable DMA available\n", __func__);
+		dev_err(dev, "%s: No suitable DMA available\n", __func__);
 
 	if (!alloc_dev->dma_parms) {
 		alloc_dev->dma_parms =
 			devm_kzalloc(alloc_dev, sizeof(*alloc_dev->dma_parms), GFP_KERNEL);
-		if (!dev->dma_parms)
+		if (!dev->dma_parms) {
+			dev_err(dev, "%s: kzalloc alloc_dev->dma_parms failed\n", __func__);
+			WRAP_AEE_EXCEPTION("mtk_cam_probe", "Kzalloc");
 			return -ENOMEM;
+		}
 	}
 
 	if (alloc_dev->dma_parms) {
 		ret = dma_set_max_seg_size(alloc_dev, UINT_MAX);
 		if (ret)
-			dev_info(dev, "Failed to set DMA segment size\n");
+			dev_err(dev, "%s: Failed to set DMA segment size\n", __func__);
 	}
 
 	cam_dev->base =  devm_platform_ioremap_resource_byname(pdev, "base");
 	if (IS_ERR(cam_dev->base)) {
-		dev_dbg(dev, "failed to map register base\n");
+		dev_err(dev, "%s: ioremap base failed\n", __func__);
+		WRAP_AEE_EXCEPTION("mtk_cam_probe", "ioremap base");
 		return PTR_ERR(cam_dev->base);
 	}
 
 	cam_dev->adl_base = devm_platform_ioremap_resource_byname(pdev, "adl");
 	if (IS_ERR(cam_dev->adl_base)) {
-		dev_dbg(dev, "failed to map adl_base\n");
+		dev_err(dev, "%s: failed to map adl_base\n", __func__);
 		cam_dev->adl_base = NULL;
 	}
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
-		dev_info(dev, "failed to get adlrd irq\n");
+		dev_err(dev, "%s: failed to get adlrd irq\n", __func__);
 		goto SKIP_ADLRD_IRQ;
 	}
 
 	ret = devm_request_irq(dev, irq, mtk_irq_adlrd, IRQF_NO_AUTOEN,
 			       dev_name(dev), cam_dev);
 	if (ret) {
-		dev_info(dev, "failed to request irq=%d\n", irq);
+		dev_err(dev, "%s: Request IRQF_NO_AUTOEN failed\n", __func__);
+		WRAP_AEE_EXCEPTION("seninf_core_probe", "Request IRQF_NO_AUTOEN");
 		return ret;
 	}
 	dev_dbg(dev, "registered adl irq=%d\n", irq);
+	//enable_irq(irq);
 
-SKIP_ADLRD_IRQ:
 	cam_dev->cmdq_clt = cmdq_mbox_create(dev, 0);
 
 	if (!cam_dev->cmdq_clt)
-		pr_info("probe cmdq_mbox_create fail\n");
+		pr_err("probe cmdq_mbox_create fail\n");
 
+SKIP_ADLRD_IRQ:
 	cam_dev->dev = dev;
 	dev_set_drvdata(dev, cam_dev);
 
@@ -4004,8 +4108,11 @@ SKIP_ADLRD_IRQ:
 	cam_dev->max_stream_num = 8; /* TODO: how */
 	cam_dev->ctxs = devm_kcalloc(dev, cam_dev->max_stream_num,
 				     sizeof(*cam_dev->ctxs), GFP_KERNEL);
-	if (!cam_dev->ctxs)
+	if (!cam_dev->ctxs) {
+		dev_err(dev, "%s: kcalloc cam_dev->ctxs failed\n", __func__);
+		WRAP_AEE_EXCEPTION("mtk_cam_probe", "Kcalloc");
 		return -ENOMEM;
+	}
 
 	for (i = 0; i < cam_dev->max_stream_num; i++)
 		mtk_cam_ctx_init(cam_dev->ctxs + i, cam_dev, i);
@@ -4024,15 +4131,22 @@ SKIP_ADLRD_IRQ:
 
 	ret = register_sub_drivers(dev);
 	if (ret) {
-		dev_info(dev, "fail to register_sub_drivers\n");
+		dev_err(dev, "%s: fail to register_sub_drivers\n", __func__);
 		goto fail_return;
 	}
 
 	mtk_cam_debug_init(&cam_dev->dbg, cam_dev);
+	init_waitqueue_head(&cam_dev->shutdown_wq);
+
+	/* mminfra debug cb */
+	cam_dev->mminfra_dbg_cb.notifier_call = mtk_cam_mminfra_dbg_cb;
+	mtk_smi_dbg_register_notifier(&cam_dev->mminfra_dbg_cb);
 
 	return 0;
 
 fail_return:
+	dev_err(dev, "%s: fail_return\n", __func__);
+	WRAP_AEE_EXCEPTION("mtk_cam_probe", "fail_return");
 
 	return ret;
 }
@@ -4059,6 +4173,27 @@ static int mtk_cam_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#define SHUTDOWN_TIMEOUT 10000
+static void mtk_cam_shutdown(struct platform_device *pdev)
+{
+	struct device *dev = &pdev->dev;
+	struct mtk_cam_device *cam  = dev_get_drvdata(dev);
+	long timeout;
+
+	dev_info(dev, "%s: shutdown\n", __func__);
+
+	timeout = wait_event_timeout(cam->shutdown_wq,
+				 !atomic_read(&cam->initialize_cnt),
+				 msecs_to_jiffies(SHUTDOWN_TIMEOUT));
+
+	if (timeout == 0) {
+		pr_info("%s: wait for shutdown %dms timeout\n",
+			__func__, SHUTDOWN_TIMEOUT);
+
+		//todo: stop all ctx
+	}
+}
+
 #define CAM_MAIN_LOW_POWER_CTRL    0x390
 #define CAM_MAIN_CAM_SPM_ACK    0x42C
 static void camsys_main_lp_ctrl(struct mtk_cam_device *cam_dev, bool on)
@@ -4082,57 +4217,22 @@ static void camsys_main_lp_ctrl(struct mtk_cam_device *cam_dev, bool on)
 		}
 	}
 
-	dev_info(cam_dev->dev, "%s: ctrl: 0x%x ack: 0x%x\n", __func__,
-		readl(cam_dev->base + CAM_MAIN_LOW_POWER_CTRL), spm_ack);
+	if (CAM_DEBUG_ENABLED(V4L2))
+		dev_info(cam_dev->dev, "%s: ctrl: 0x%x ack: 0x%x\n", __func__,
+			readl(cam_dev->base + CAM_MAIN_LOW_POWER_CTRL), spm_ack);
 }
 
 static int mtk_cam_runtime_suspend(struct device *dev)
 {
 	struct mtk_cam_device *cam_dev = dev_get_drvdata(dev);
 
-	dev_dbg(dev, "- %s\n", __func__);
+	if (CAM_DEBUG_ENABLED(V4L2))
+		dev_info(dev, "- %s\n", __func__);
 
 	camsys_main_lp_ctrl(cam_dev, false);
 
 	return 0;
 }
-
-/* note:
- *   issue: would timeout. can't enable this now
- */
-//#define DO_ADLWR_RESET
-
-#ifdef DO_ADLWR_RESET
-#define ADLWR_ADL_RESET 0x800
-static void adlwr_reset(struct mtk_cam_device *cam_dev)
-{
-	int sw_ctl;
-	int ret;
-
-	if (IS_ERR_OR_NULL(cam_dev->adl_base)) {
-		dev_info(cam_dev->dev, "%s: skipped\n", __func__);
-		return;
-	}
-
-	writel(0, cam_dev->adl_base + ADLWR_ADL_RESET);
-	writel(BIT(1), cam_dev->adl_base + ADLWR_ADL_RESET);
-	wmb(); /* make sure committed */
-
-	ret = readx_poll_timeout(readl, cam_dev->adl_base + ADLWR_ADL_RESET,
-				 sw_ctl,
-				 sw_ctl & BIT(0),
-				 1 /* delay, us */,
-				 5000 /* timeout, us */);
-	if (ret < 0) {
-		dev_info(cam_dev->dev, "%s: error: timeout!\n", __func__);
-		return;
-	}
-
-	/* do hw rst */
-	writel(0x3c, cam_dev->adl_base + ADLWR_ADL_RESET);
-	writel(0, cam_dev->adl_base + ADLWR_ADL_RESET);
-}
-#endif
 
 static void init_camsys_main_adl_setting(struct mtk_cam_device *cam_dev)
 {
@@ -4155,14 +4255,12 @@ static int mtk_cam_runtime_resume(struct device *dev)
 {
 	struct mtk_cam_device *cam_dev = dev_get_drvdata(dev);
 
-	dev_dbg(dev, "- %s\n", __func__);
+	if (CAM_DEBUG_ENABLED(V4L2))
+		dev_info(dev, "- %s\n", __func__);
 
 	camsys_main_lp_ctrl(cam_dev, true);
 
 	init_camsys_main_adl_setting(cam_dev);
-#ifdef DO_ADLWR_RESET
-	adlwr_reset(cam_dev);
-#endif
 
 	mtk_cam_timesync_init(true);
 
@@ -4177,6 +4275,7 @@ static const struct dev_pm_ops mtk_cam_pm_ops = {
 static struct platform_driver mtk_cam_driver = {
 	.probe   = mtk_cam_probe,
 	.remove  = mtk_cam_remove,
+	.shutdown  = mtk_cam_shutdown,
 	.driver  = {
 		.name  = "mtk-cam",
 		.of_match_table = of_match_ptr(mtk_cam_of_ids),

@@ -28,11 +28,21 @@ subdir-ccflags-y += \
 	-I$(IMGSENSOR_DRIVER_PATH)/../inc \
 	-I$(MTK_ISP_DRIVER_PATH)/ \
 	-I$(MTK_ISP_DRIVER_PATH)/include/ \
+	-I$(DEVICE_MODULES_PATH)/drivers/misc/mediatek/include/mt-plat/ \
 
 # XIAOMI ADD
 subdir-ccflags-y += -D__XIAOMI_CAMERA__
 ifeq ($(CONFIG_BUILD_XIAOMI_CAMERA_IMAGE_NAMES),"duchamp")
 subdir-ccflags-y += -DDUCHAMP_CAM
+endif
+ifeq ($(CONFIG_BUILD_XIAOMI_CAMERA_IMAGE_NAMES),"rothko")
+subdir-ccflags-y += -DROTHKO_CAM
+endif
+ifeq ($(CONFIG_BUILD_XIAOMI_CAMERA_IMAGE_NAMES),"degas")
+subdir-ccflags-y += -DDEGAS_CAM
+endif
+ifeq ($(CONFIG_BUILD_XIAOMI_CAMERA_IMAGE_NAMES), malachite)
+subdir-ccflags-y += -DMALACHITE_CAM
 endif
 #XIAOMI END
 
@@ -72,6 +82,11 @@ unknown_drv :=
 endif
 ifneq ($(wildcard $(IMGSENSOR_DRIVER_PATH)/camera_project/k6985v1_64_alpha/$(1)),)
 alpha_drv_k6985 += $(1)
+total_subdrvs += $(1)
+unknown_drv :=
+endif
+ifneq ($(wildcard $(IMGSENSOR_DRIVER_PATH)/camera_project/k6878v1_64_alpha/$(1)),)
+alpha_drv_k6878 += $(1)
 total_subdrvs += $(1)
 unknown_drv :=
 endif
@@ -125,6 +140,11 @@ endif
 ifneq ($(alpha_drv_k6985),)
 $(info alpha_drv_k6985 : $(alpha_drv_k6985))
 $(foreach drv,$(alpha_drv_k6985),$(eval $(call add_subdrv,camera_project/k6985v1_64_alpha/$(drv))))
+endif
+
+ifneq ($(alpha_drv_k6878),)
+$(info alpha_drv_k6878 : $(alpha_drv_k6878))
+$(foreach drv,$(alpha_drv_k6878),$(eval $(call add_subdrv,camera_project/k6878v1_64_alpha/$(drv))))
 endif
 
 comma := ,

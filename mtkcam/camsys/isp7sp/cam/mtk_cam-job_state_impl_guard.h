@@ -9,6 +9,8 @@
 #define I2C_THRES_FROM_L_SOF_NS 3000000
 #define SCQ_THRES_FROM_F_SOF_NS 8000000
 
+#include "mtk_cam-job.h"
+
 struct state_accessor;
 struct state_accessor_ops {
 	/*
@@ -110,7 +112,7 @@ static inline int sf_cur_isp_state(struct state_accessor *s_acc)
 static inline int guard_next_compose(struct state_accessor *s_acc,
 			       struct transition_param *p)
 {
-	return (unsigned int)(cur_seq_no(s_acc) - p->info->ack_seq_no) == 1;
+	return frame_seq_diff(cur_seq_no(s_acc), p->info->ack_seq_no) == 1;
 }
 
 static inline int guard_ack_eq(struct state_accessor *s_acc,
@@ -134,7 +136,7 @@ static inline int guard_inner_eq(struct state_accessor *s_acc,
 static inline int guard_inner_ge(struct state_accessor *s_acc,
 				 struct transition_param *p)
 {
-	return p->info->inner_seq_no >= cur_seq_no(s_acc);
+	return frame_seq_ge(p->info->inner_seq_no, cur_seq_no(s_acc));
 }
 
 /* TODO(AY): may be removed */
@@ -174,7 +176,7 @@ static inline bool valid_cq_execution(struct transition_param *p)
 	if (unlikely(!p->s_params))
 		return false;
 
-	return (p->event_ts - p->info->sof_ts_ns) < SCQ_THRES_FROM_F_SOF_NS;
+	return (p->event_ts - p->info->sof_l_ts_ns) < SCQ_THRES_FROM_F_SOF_NS;
 }
 
 static inline int guard_apply_sensor_subsample(struct state_accessor *s_acc,
@@ -182,6 +184,7 @@ static inline int guard_apply_sensor_subsample(struct state_accessor *s_acc,
 {
 	/* TODO: add ts check */
 	return allow_applying_hw(s_acc) &&
+		ops_call(s_acc, prev_allow_apply_sensor) &&
 		ops_call(s_acc, cur_isp_state) >= S_ISP_APPLYING;
 }
 
@@ -206,6 +209,11 @@ static inline bool is_sensor_set(int sensor_state)
 	return sensor_state >= S_SENSOR_LATCHED;
 }
 
+static inline bool is_sensor_ge_applied(int sensor_state)
+{
+	return sensor_state >= S_SENSOR_APPLIED;
+}
+
 static inline bool is_isp_ge_outer(int isp_state)
 {
 	return isp_state >= S_ISP_OUTER;
@@ -214,6 +222,11 @@ static inline bool is_isp_ge_outer(int isp_state)
 static inline bool is_isp_ge_processing(int isp_state)
 {
 	return isp_state >= S_ISP_PROCESSING;
+}
+
+static inline bool is_isp_aborted(int isp_state)
+{
+	return isp_state == S_ISP_ABORTED;
 }
 
 static inline bool current_sensor_ready(struct state_accessor *s_acc)

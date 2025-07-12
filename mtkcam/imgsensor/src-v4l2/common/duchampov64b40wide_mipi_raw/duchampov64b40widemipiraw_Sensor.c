@@ -23,6 +23,8 @@
 #include "duchampov64b40widemipiraw_Sensor.h"
 
 static void set_init_setting(void *arg);
+static void set_mode_setting(void *arg, enum SENSOR_SCENARIO_ID_ENUM scenario_id);
+static void set_seamless_mode_setting(void *arg, enum SENSOR_SCENARIO_ID_ENUM scenario_id);
 static u32 evaluate_frame_rate_by_scenario(void *arg, enum SENSOR_SCENARIO_ID_ENUM scenario_id, u32 framerate);
 static void set_sensor_cali(void *arg);
 static int get_sensor_temperature(void *arg);
@@ -364,6 +366,28 @@ static struct mtk_mbus_frame_desc_entry frame_desc_cus11[] = {
 			.hsize = 1280,
 			.vsize = 720,
 			.user_data_desc = VC_STAGGER_NE,
+		},
+	},
+};
+
+static struct mtk_mbus_frame_desc_entry frame_desc_cus12[] = {
+	{
+		.bus.csi2 = {
+			.channel = 0,
+			.data_type = 0x2b,
+			.hsize = 4624,
+			.vsize = 3472,
+			.user_data_desc = VC_STAGGER_NE,
+		},
+	},
+	{
+		.bus.csi2 = {
+			.channel = 0,
+			.data_type = 0x30,
+			.hsize = 576,
+			.vsize = 868,
+			.dt_remap_to_type = MTK_MBUS_FRAME_DESC_REMAP_TO_RAW10,
+			.user_data_desc = VC_PDAF_STATS_NE_PIX_1,
 		},
 	},
 };
@@ -1013,11 +1037,11 @@ static struct subdrv_mode_struct mode_struct[] = {
 	{
 		.frame_desc = frame_desc_cus9,
 		.num_entries = ARRAY_SIZE(frame_desc_cus9),
-		.mode_setting_table = duchampov64b40wide_custom9_setting,
-		.mode_setting_len = ARRAY_SIZE(duchampov64b40wide_custom9_setting),
+		.mode_setting_table = duchampov64b40wide_custom9_setting_sunny,
+		.mode_setting_len = ARRAY_SIZE(duchampov64b40wide_custom9_setting_sunny),
 		.seamless_switch_group = 2,
-		.seamless_switch_mode_setting_table = duchampov64b40wide_custom9_setting,
-		.seamless_switch_mode_setting_len = ARRAY_SIZE(duchampov64b40wide_custom9_setting),
+		.seamless_switch_mode_setting_table = duchampov64b40wide_custom9_setting_sunny,
+		.seamless_switch_mode_setting_len = ARRAY_SIZE(duchampov64b40wide_custom9_setting_sunny),
 		.hdr_mode = HDR_RAW_STAGGER,
 		.raw_cnt = 2,
 		.exp_cnt = 2,
@@ -1163,6 +1187,58 @@ static struct subdrv_mode_struct mode_struct[] = {
 		.fine_integ_line = 0,
 		.delay_frame = 2,
 	},
+	// custom12 mode 16 : fullsize quad bayer 16M
+	// M2_4624x3472_crop_quad_bayer_30fps
+	// PD size = 576x868
+	// Tline = 7.7083us
+	// VB = 6.59ms
+	{
+		.frame_desc = frame_desc_cus12,
+		.num_entries = ARRAY_SIZE(frame_desc_cus12),
+		.mode_setting_table = duchampov64b40wide_custom12_setting,
+		.mode_setting_len = ARRAY_SIZE(duchampov64b40wide_custom12_setting),
+		.seamless_switch_group = 1,
+		.seamless_switch_mode_setting_table = duchampov64b40wide_custom12_setting,
+		.seamless_switch_mode_setting_len = ARRAY_SIZE(duchampov64b40wide_custom12_setting),
+		.hdr_mode = HDR_NONE,
+		.raw_cnt = 1,
+		.exp_cnt = 1,
+		.pclk = 115200000,
+		.linelength = 888,
+		.framelength = 4319,
+		.max_framerate = 300,
+		.mipi_pixel_rate = 1136150000,
+		.readout_length = 0,
+		.read_margin = 10,
+		.framelength_step = 4,
+		.coarse_integ_step = 4,
+		.min_exposure_line = 8,
+		.multi_exposure_shutter_range[IMGSENSOR_EXPOSURE_LE].min = 8,
+		.imgsensor_winsize_info = {
+			.full_w = 9248,
+			.full_h = 6944,
+			.x0_offset = 2312,
+			.y0_offset = 1736,
+			.w0_size = 4624,
+			.h0_size = 3472,
+			.scale_w = 4624,
+			.scale_h = 3472,
+			.x1_offset = 0,
+			.y1_offset = 0,
+			.w1_size = 4624,
+			.h1_size = 3472,
+			.x2_tg_offset = 0,
+			.y2_tg_offset = 0,
+			.w2_tg_size = 4624,
+			.h2_tg_size = 3472,
+		},
+		.pdaf_cap = TRUE,
+		.imgsensor_pd_info = &imgsensor_pd_info_isz,
+		.ae_binning_ratio = 1000,
+		.fine_integ_line = 0,
+		.delay_frame = 2,
+		.sensor_output_dataformat = SENSOR_OUTPUT_FORMAT_RAW_4CELL_B,
+	},
 };
 
 static struct subdrv_static_ctx static_ctx = {
@@ -1244,6 +1320,7 @@ static struct subdrv_static_ctx static_ctx = {
 	.mi_enable_async = 1, // enable async setting
 	.mi_disable_set_dummy = 1, // disable set dummy
 	.s_mi_init_setting = set_init_setting,
+	.s_mi_mode_setting = set_mode_setting,
 	.mi_evaluate_frame_rate_by_scenario = evaluate_frame_rate_by_scenario,
 	.init_setting_table = duchampov64b40wide_init_setting_sunny,
 	.init_setting_len = ARRAY_SIZE(duchampov64b40wide_init_setting_sunny),
@@ -1319,6 +1396,75 @@ static void set_init_setting(void *arg)
 		DRV_LOG_MUST(ctx, "unknown vendor id(0x%02x), use sunny setting!",
 			ctx->s_ctx.mi_vendor_id);
 		break;
+	}
+}
+
+static void set_mode_setting(void *arg, enum SENSOR_SCENARIO_ID_ENUM scenario_id)
+{
+	struct subdrv_ctx *ctx = (struct subdrv_ctx *)arg;
+
+	switch (scenario_id) {
+		case SENSOR_SCENARIO_ID_CUSTOM9 :
+			switch (ctx->s_ctx.mi_vendor_id) {
+			case MI_VENDOR_SUNNY:
+				i2c_table_write(ctx, duchampov64b40wide_custom9_setting_sunny,
+					ARRAY_SIZE(duchampov64b40wide_custom9_setting_sunny));
+				DRV_LOG_MUST(ctx, "vendor id(0x%02x), use sunny mode setting!",
+					ctx->s_ctx.mi_vendor_id);
+				break;
+			case MI_VENDOR_AAC:
+				i2c_table_write(ctx, duchampov64b40wide_custom9_setting_aac,
+					ARRAY_SIZE(duchampov64b40wide_custom9_setting_aac));
+				DRV_LOG_MUST(ctx, "vendor id(0x%02x), use aac mode setting!",
+					ctx->s_ctx.mi_vendor_id);
+				break;
+			default:
+				i2c_table_write(ctx, duchampov64b40wide_custom9_setting_sunny,
+					ARRAY_SIZE(duchampov64b40wide_custom9_setting_sunny));
+				DRV_LOG_MUST(ctx, "unknown vendor id(0x%02x), use sunny mode setting!",
+					ctx->s_ctx.mi_vendor_id);
+				break;
+			}
+			break;
+		default:
+			i2c_table_write(ctx, ctx->s_ctx.mode[scenario_id].mode_setting_table,
+				ctx->s_ctx.mode[scenario_id].mode_setting_len);
+			break;
+	}
+}
+
+static void set_seamless_mode_setting(void *arg, enum SENSOR_SCENARIO_ID_ENUM scenario_id)
+{
+	struct subdrv_ctx *ctx = (struct subdrv_ctx *)arg;
+
+	switch (scenario_id) {
+		case SENSOR_SCENARIO_ID_CUSTOM9 :
+			switch (ctx->s_ctx.mi_vendor_id) {
+			case MI_VENDOR_SUNNY:
+				i2c_table_write(ctx, duchampov64b40wide_custom9_setting_sunny,
+					ARRAY_SIZE(duchampov64b40wide_custom9_setting_sunny));
+				DRV_LOG_MUST(ctx, "vendor id(0x%02x), use sunny mode setting!",
+					ctx->s_ctx.mi_vendor_id);
+				break;
+			case MI_VENDOR_AAC:
+				i2c_table_write(ctx, duchampov64b40wide_custom9_setting_aac,
+					ARRAY_SIZE(duchampov64b40wide_custom9_setting_aac));
+				DRV_LOG_MUST(ctx, "vendor id(0x%02x), use aac mode setting!",
+					ctx->s_ctx.mi_vendor_id);
+				break;
+			default:
+				i2c_table_write(ctx, duchampov64b40wide_custom9_setting_sunny,
+					ARRAY_SIZE(duchampov64b40wide_custom9_setting_sunny));
+				DRV_LOG_MUST(ctx, "unknown vendor id(0x%02x), use sunny mode setting!",
+					ctx->s_ctx.mi_vendor_id);
+				break;
+			}
+			break;
+		default:
+			i2c_table_write(ctx,
+				ctx->s_ctx.mode[scenario_id].seamless_switch_mode_setting_table,
+				ctx->s_ctx.mode[scenario_id].seamless_switch_mode_setting_len);
+			break;
 	}
 }
 
@@ -1530,9 +1676,9 @@ static int duchampov64b40wide_seamless_switch(struct subdrv_ctx *ctx, u8 *para, 
 
 	i2c_table_write(ctx, addr_data_pair_seamless_switch_step1_duchampov64b40wide,
 		ARRAY_SIZE(addr_data_pair_seamless_switch_step1_duchampov64b40wide));
-	i2c_table_write(ctx,
-		ctx->s_ctx.mode[scenario_id].seamless_switch_mode_setting_table,
-		ctx->s_ctx.mode[scenario_id].seamless_switch_mode_setting_len);
+
+	set_seamless_mode_setting(ctx, scenario_id);
+
 	if (ae_ctrl) {
 		switch (ctx->s_ctx.mode[scenario_id].hdr_mode) {
 		case HDR_RAW_STAGGER:

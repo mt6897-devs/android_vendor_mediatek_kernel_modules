@@ -28,7 +28,7 @@
 #define adaptor_logd(_ctx, format, args...) do { \
 	if ((_ctx) && unlikely(*((_ctx)->sensor_debug_flag))) { \
 		dev_info((_ctx)->dev, "[%s][%s][%s] " format, \
-			(_ctx)->sd.name, \
+			((_ctx)->sd.name) ? ((_ctx)->sd.name) : "null", \
 			((_ctx)->subdrv) ? ((_ctx)->subdrv->name) : "null", __func__, ##args); \
 	} \
 } while (0)
@@ -36,7 +36,7 @@
 #define adaptor_logi(_ctx, format, args...) do { \
 	if (_ctx) { \
 		dev_info((_ctx)->dev, "[%s][%s][%s] " format, \
-			(_ctx)->sd.name, \
+			((_ctx)->sd.name) ? ((_ctx)->sd.name) : "null", \
 			((_ctx)->subdrv) ? ((_ctx)->subdrv->name) : "null", __func__, ##args); \
 	} \
 } while (0)
@@ -49,6 +49,32 @@ static unsigned int set_ctrl_unlock;
 extern unsigned int gSensor_num;
 extern unsigned int is_multicam;
 extern unsigned int is_imgsensor_fusion_test_workaround;
+#endif
+struct ImgsensorFtmInfo{
+	u32 sensorID;
+	u8 vendorID;
+	char sensorName[80];
+	u32 fusionID_l;
+	char fusionID[20];
+	u32 snID_l;
+	char sensorSn[20];
+};
+#ifdef __XIAOMI_CAMERA__
+#define MAX_SETTTING_SIZE 2000
+#define MAX_STREAM_SETTTING_SIZE 20
+#define MAX_HEADER_SIZE 4
+
+typedef struct {
+	u16 header[MAX_HEADER_SIZE];
+	u16 init_setting_size;
+	u16 mode_setting_size;
+	u16 streamon_setting_size;
+	u16 streamoff_setting_size;
+	u16 *init_setting_buf;
+	u16 *mode_setting_buf;
+	u16 *streamon_setting_buf;
+	u16 *streamoff_setting_buf;
+} online_setting_data;
 #endif
 
 struct adaptor_ae_ctrl_dbg_info {
@@ -193,9 +219,11 @@ struct adaptor_ctx {
 	unsigned int is_sensor_inited:1;
 	unsigned int is_sensor_scenario_inited:1;
 	unsigned int is_sensor_reset_stream_off:1;
+	unsigned int is_i2c_bus_scp:1;
 
 	int open_refcnt;
 	int power_refcnt;
+	int mclk_refcnt;
 
 	struct subdrv_pw_seq_entry *ctx_pw_seq;
 

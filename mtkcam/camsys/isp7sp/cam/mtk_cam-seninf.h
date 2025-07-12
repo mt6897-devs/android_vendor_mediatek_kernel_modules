@@ -42,8 +42,9 @@
 struct seninf_ctx;
 
 /* aov sensor use */
+#define AOV_SENINF_NUM 6
 extern struct mtk_seninf_aov_param g_aov_param;
-extern struct seninf_ctx *aov_ctx[6];
+extern struct seninf_ctx *aov_ctx[AOV_SENINF_NUM];
 
 struct seninf_struct_pair {
 	u32 first;
@@ -122,6 +123,7 @@ struct seninf_core {
 	struct list_head list_mux;
 	struct seninf_struct_pair mux_range[TYPE_MAX_NUM];
 	struct seninf_mux mux[SENINF_MUX_NUM];
+	struct seninf_struct_pair muxvr_range[TYPE_MAX_NUM];
 #ifdef SENINF_DEBUG
 	struct list_head list_cam_mux;
 	struct seninf_struct_pair cammux_range[TYPE_MAX_NUM];
@@ -138,12 +140,18 @@ struct seninf_core {
 	phandle rproc_ccu_phandle;
 	struct rproc *rproc_ccu_handle;
 
+	/* seamless switch vsync debug flow used  */
+	bool seamless_vsync_debug_en;
+	bool is_mt6878;
+	struct mutex seamless_vsync_debug_mutex;
+
 	/* platform properties */
 	int cphy_settle_delay_dt;
 	int dphy_settle_delay_dt;
 	int settle_delay_ck;
 	int hs_trail_parameter;
 	unsigned int force_glp_en; /* force enable generic long packet */
+	bool is_porting_muxvr_range;
 
 	spinlock_t spinlock_irq;
 
@@ -237,6 +245,9 @@ struct seninf_ctx {
 	int pad2cam[PAD_MAXCNT][MAX_DEST_NUM];
 	int pad_tag_id[PAD_MAXCNT][MAX_DEST_NUM];
 
+	/* seamless switch vsync debug en */
+	bool seamless_vsync_debug_seninf_en;
+
 	/* remote sensor */
 	struct v4l2_subdev *sensor_sd;
 	int sensor_pad_idx;
@@ -258,6 +269,7 @@ struct seninf_ctx {
 	void __iomem *reg_ana_csi_rx[CSI_PORT_MAX_NUM];
 	void __iomem *reg_ana_dphy_top[CSI_PORT_MAX_NUM];
 	void __iomem *reg_ana_cphy_top[CSI_PORT_MAX_NUM];
+	void __iomem *reg_mipi_csi_top_ctrl[MIPI_CSI_TOP_CTRL_NUM];
 	void __iomem *reg_csirx_mac_csi[CSI_PORT_MAX_NUM];
 	void __iomem *reg_csirx_mac_top[CSI_PORT_MAX_NUM];
 	void __iomem *reg_if_top;
@@ -310,6 +322,8 @@ struct seninf_ctx {
 	unsigned int dbg_timeout;
 	unsigned int dbg_last_dump_req;
 	unsigned int power_status_flag;
+	unsigned int esd_status_flag;
+	unsigned int set_abort_flag;
 
 	/* for sentest use */
 	bool allow_adjust_isp_en;
@@ -326,6 +340,23 @@ struct seninf_ctx {
 	u32 vcore_step_index;
 	u32 clk_index;
 	u32 clk_src_index;
+	/* debug_current_status */
+	u64 debug_cur_sys_time_in_ns;
+	u32 debug_cur_dphy_irq;
+	u32 debug_cur_cphy_irq;
+	u32 debug_cur_mac_irq;
+	u32 debug_cur_seninf_irq;
+	u32 debug_cur_temp;
+	u32 debug_cur_mac_csi2_size_chk_ctrl0;
+	u32 debug_cur_mac_csi2_size_chk_ctrl1;
+	u32 debug_cur_mac_csi2_size_chk_ctrl2;
+	u32 debug_cur_mac_csi2_size_chk_ctrl3;
+	u32 debug_cur_mac_csi2_size_chk_ctrl4;
+	u32 debug_cur_mac_csi2_size_chk_rcv0;
+	u32 debug_cur_mac_csi2_size_chk_rcv1;
+	u32 debug_cur_mac_csi2_size_chk_rcv2;
+	u32 debug_cur_mac_csi2_size_chk_rcv3;
+	u32 debug_cur_mac_csi2_size_chk_rcv4;
 };
 
 struct mtk_cam_seninf_irq_event_st {

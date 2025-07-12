@@ -169,6 +169,7 @@ struct mtk_camsv_device {
 
 	unsigned int handled_tags;
 	unsigned int used_tags;
+	unsigned int drop_tags;
 
 	int fifo_size;
 	void *msg_buffer;
@@ -196,6 +197,8 @@ struct mtk_camsv_device {
 
 	/* for backup/restore in recovery flow */
 	struct mtk_camsv_backup_setting backup_setting;
+
+	atomic_t is_seamless;
 };
 
 void sv_reset(struct mtk_camsv_device *sv_dev);

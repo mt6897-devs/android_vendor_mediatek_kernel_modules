@@ -345,9 +345,16 @@ static int set_sv_meta_stats_info(
 
 	return 0;
 }
-static int get_sv_two_smi_setting(int *sv_two_smi_en)
+static int get_sv_two_smi_setting(int *sv_two_smi_en, int *sv_support_two_smi_out)
 {
 	*sv_two_smi_en = 0;
+	*sv_support_two_smi_out = 1;
+
+	return 0;
+}
+static int get_single_sv_opp_idx(unsigned int *opp_idx)
+{
+	*opp_idx = 0;
 
 	return 0;
 }
@@ -359,6 +366,8 @@ static int get_sv_dma_th_setting(unsigned int dev_id, unsigned int fifo_img_p1,
 	const unsigned int max_fifo_img_p2[CAMSV_END] = {1706, 1706, 0, 0, 0, 0};
 	const unsigned int max_fifo_len_p1[CAMSV_END] = {128, 128, 128, 64, 0, 0};
 	const unsigned int max_fifo_len_p2[CAMSV_END] = {64, 64, 0, 0, 0, 0};
+	const unsigned int lb_fifo_img[CAMSV_END] = {546, 546, 410, 256, 70, 70};
+	const unsigned int lb_fifo_len[CAMSV_END] = {26, 26, 26, 12, 0, 0};
 	const unsigned int max_fifo_cq1 = 64;
 	const unsigned int max_fifo_cq2 = 64;
 	unsigned int img_p1, img_p2, len_p1, len_p2;
@@ -377,7 +386,8 @@ static int get_sv_dma_th_setting(unsigned int dev_id, unsigned int fifo_img_p1,
 	}
 
 	th_setting->urgent_th =
-		1 << 31 | FIFO_THRESHOLD(img_p1, 4/10, 3/10);
+		1 << 31 | FIFO_THRESHOLD(
+		max((int)img_p1, (int)lb_fifo_img[dev_id]), 4/10, 3/10);
 	th_setting->ultra_th =
 		1 << 28 | FIFO_THRESHOLD(img_p1, 2/10, 1/10);
 	th_setting->pultra_th =
@@ -386,7 +396,8 @@ static int get_sv_dma_th_setting(unsigned int dev_id, unsigned int fifo_img_p1,
 		1 << 31 | FIFO_THRESHOLD(img_p1, 1/10, 0);
 
 	th_setting->urgent_th2 =
-		1 << 31 | FIFO_THRESHOLD(img_p2, 4/10, 3/10);
+		1 << 31 | FIFO_THRESHOLD(
+		max((int)img_p2, (int)lb_fifo_img[dev_id]), 4/10, 3/10);
 	th_setting->ultra_th2 =
 		1 << 28 | FIFO_THRESHOLD(img_p2, 2/10, 1/10);
 	th_setting->pultra_th2 =
@@ -395,7 +406,8 @@ static int get_sv_dma_th_setting(unsigned int dev_id, unsigned int fifo_img_p1,
 		1 << 31 | FIFO_THRESHOLD(img_p2, 1/10, 0);
 
 	th_setting->urgent_len1_th =
-		1 << 31 | FIFO_THRESHOLD(len_p1, 4/10, 3/10);
+		1 << 31 | FIFO_THRESHOLD(
+		max((int)len_p1, (int)lb_fifo_len[dev_id]), 4/10, 3/10);
 	th_setting->ultra_len1_th =
 		1 << 28 | FIFO_THRESHOLD(len_p1, 2/10, 1/10);
 	th_setting->pultra_len1_th =
@@ -404,7 +416,8 @@ static int get_sv_dma_th_setting(unsigned int dev_id, unsigned int fifo_img_p1,
 		1 << 31 | FIFO_THRESHOLD(len_p1, 1/10, 0);
 
 	th_setting->urgent_len2_th =
-		1 << 31 | FIFO_THRESHOLD(len_p2, 4/10, 3/10);
+		1 << 31 | FIFO_THRESHOLD(
+		max((int)len_p2, (int)lb_fifo_len[dev_id]), 4/10, 3/10);
 	th_setting->ultra_len2_th =
 		1 << 28 | FIFO_THRESHOLD(len_p2, 2/10, 1/10);
 	th_setting->pultra_len2_th =
@@ -659,7 +672,7 @@ static int query_caci_size(int w, int h, size_t *size)
 
 static int query_max_exp_support(u32 raw_idx)
 {
-	// raw_idx: {1,2,3...} = {RAW_A, RAW_B, RAW_C}
+	// raw_idx: {0,1,2...} = {RAW_A, RAW_B, RAW_C}
 	return 2;
 }
 
@@ -727,6 +740,36 @@ static int query_icc_path_idx(int domain, int smi_port)
 		return map_raw_icc_path(smi_port);
 }
 
+static u8 vb2_queues_support_list[] = {
+	/* capture queues */
+	MTK_RAW_MAIN_STREAM_OUT,
+	MTK_RAW_PURE_RAW_OUT,
+	MTK_RAW_YUVO_1_OUT,
+	MTK_RAW_YUVO_2_OUT,
+	MTK_RAW_YUVO_3_OUT,
+	MTK_RAW_YUVO_4_OUT,
+	MTK_RAW_YUVO_5_OUT,
+	MTK_RAW_DRZS4NO_1_OUT,
+	MTK_RAW_DRZS4NO_3_OUT,
+	MTK_RAW_RZH1N2TO_1_OUT,
+	MTK_RAW_RZH1N2TO_2_OUT,
+	MTK_RAW_RZH1N2TO_3_OUT,
+	MTK_RAW_DRZB2NO_1_OUT,
+	MTK_RAW_IPU_OUT,
+	MTK_RAW_MAIN_STREAM_SV_1_OUT,
+	MTK_RAW_MAIN_STREAM_SV_2_OUT,
+	MTK_RAW_META_OUT_0,
+	MTK_RAW_META_OUT_1,
+	MTK_RAW_META_SV_OUT_0,
+	MTK_RAW_META_SV_OUT_1,
+	MTK_RAW_META_SV_OUT_2,
+	/* output queues*/
+	MTK_RAW_META_IN,
+	MTK_RAW_RAWI_2_IN,
+
+};
+
+
 static const struct plat_v4l2_data mt6897_v4l2_data = {
 	.raw_pipeline_num = 3,
 	.camsv_pipeline_num = 16,
@@ -749,12 +792,16 @@ static const struct plat_v4l2_data mt6897_v4l2_data = {
 
 	.reserved_camsv_dev_id = 3,
 
+	.vb2_queues_support_list = vb2_queues_support_list,
+	.vb2_queues_support_list_num = ARRAY_SIZE(vb2_queues_support_list),
+
 	.set_meta_stats_info = set_meta_stats_info,
 	.get_meta_stats_port_size = get_meta_stats_port_size,
 
 	.set_sv_meta_stats_info = set_sv_meta_stats_info,
 	.get_sv_dma_th_setting = get_sv_dma_th_setting,
 	.get_sv_two_smi_setting = get_sv_two_smi_setting,
+	.get_single_sv_opp_idx = get_single_sv_opp_idx,
 	.get_mraw_dmao_common_setting = get_mraw_dmao_common_setting,
 	.set_mraw_meta_stats_info = set_mraw_meta_stats_info,
 	.get_mraw_stats_cfg_param = get_mraw_stats_cfg_param,
@@ -771,6 +818,11 @@ static const struct plat_data_hw mt6897_hw_data = {
 	.query_caci_size = query_caci_size,
 	.query_max_exp_support = query_max_exp_support,
 	.query_icc_path_idx = query_icc_path_idx,
+	.apu_support = true,
+	.max_main_pipe_w = 6632,
+	.max_main_pipe_twin_w = 6200,
+	.pixel_mode_max = 2,
+	.has_pixel_mode_contraints = true,
 };
 
 struct camsys_platform_data mt6897_data = {

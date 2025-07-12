@@ -10,6 +10,8 @@
 #include <media/v4l2-event.h>
 #include <media/v4l2-subdev.h>
 
+#include <soc/mediatek/smi.h>
+
 #include "mtk_cam.h"
 #include "mtk_cam-ctrl.h"
 #include "mtk_cam-debug.h"
@@ -21,6 +23,10 @@
 #include "mtk_camera-videodev2.h"
 #include "mtk_cam-trace.h"
 #include "mtk_cam-job_utils.h"
+
+static unsigned int disable_recover_flow = 0;
+module_param(disable_recover_flow, uint, 0644);
+MODULE_PARM_DESC(disable_recover_flow, "disable_recover_flow");
 
 #define WATCHDOG_INTERVAL_MS		400
 /*
@@ -49,6 +55,9 @@ unsigned long engine_idx_to_bit(int engine_type, int idx)
 
 static int mtk_cam_ctrl_get(struct mtk_cam_ctrl *cam_ctrl)
 {
+	if (!cam_ctrl)
+		return -1;
+
 	atomic_inc(&cam_ctrl->ref_cnt);
 
 	if (unlikely(atomic_read(&cam_ctrl->stopped))) {
@@ -418,8 +427,10 @@ static void mtk_cam_ctrl_wake_up_on_event(struct mtk_cam_ctrl *ctrl, int event)
 	wake_up(&ctrl->event_wq);
 }
 
-/* note: just to support little margin for sw latency here */
-#define VALID_SWITCH_PERIOD_FROM_VSYNC_MS	3
+/* note: just to support little margin for sw latency here,
+ *       3ms for cam sw latency, 1ms for mmdvfs latency
+ */
+#define VALID_SWITCH_PERIOD_FROM_VSYNC_MS	(3 + 1)
 struct seamless_check_args {
 	int expect_inner;
 	int expect_ack;
@@ -523,7 +534,6 @@ static int mtk_cam_ctrl_send_event(struct mtk_cam_ctrl *ctrl, int event)
 
 	if (CAM_DEBUG_ENABLED(STATE))
 		debug_send_event(&p);
-
 
 	ctrl_send_event(ctrl, &p);
 
@@ -1143,6 +1153,9 @@ static int mtk_cam_ctrl_stream_on_job(struct mtk_cam_job *job)
 
 STREAM_ON_FAIL:
 	dev_info(dev, "%s: failed. ctx=%d\n", __func__, ctx->stream_id);
+	mtk_smi_dbg_hang_detect("camsys-raw");
+	mtk_cam_event_error(ctrl, MSG_STREAM_ON_ERROR);
+	WRAP_AEE_EXCEPTION(MSG_STREAM_ON_ERROR, "stream on failed");
 	return -1;
 }
 
@@ -1204,6 +1217,8 @@ static void mtk_cam_ctrl_seamless_switch_flow(struct mtk_cam_job *job)
 	dev_info(dev, "[%s] begin waiting switch no:%d seq 0x%x\n",
 		__func__, job->req_seq, job->frame_seq_no);
 
+	mtk_cam_job_update_clk_switching(job, 1);
+
 	prev_seq = prev_frame_seq(job->frame_seq_no);
 	check_args.expect_inner = prev_seq;
 	check_args.expect_ack = job->frame_seq_no;
@@ -1216,22 +1231,35 @@ static void mtk_cam_ctrl_seamless_switch_flow(struct mtk_cam_job *job)
 		goto SWITCH_FAILURE;
 	}
 
-	mtk_cam_job_update_clk_switching(job, 1);
-	call_jobop(job, switch_prepare);
+	call_job_seamless_ops(job, before_sensor);
 
 	mtk_cam_job_manually_apply_sensor(job);
 
-	if (mtk_cam_job_manually_apply_isp_sync(job))
+	if (call_job_seamless_ops(job, after_sensor))
 		goto SWITCH_FAILURE;
 
-	call_jobop(job, apply_switch);
 	vsync_set_desired(&ctrl->vsync_col, job->master_engine);
+
+	if (mtk_cam_ctrl_wait_event(ctrl, check_done, &prev_seq, 999)) {
+		dev_info(dev, "[%s] check_done timeout: prev_seq=0x%x\n",
+			 __func__, prev_seq);
+		goto SWITCH_FAILURE;
+	}
+
+	/* should set ts for next job's apply_sensor */
+	ctrl->r_info.sof_ts_ns = ktime_get_boottime_ns();
+	ctrl->r_info.sof_l_ts_ns = ktime_get_boottime_ns();
+
+	call_job_seamless_ops(job, after_prev_frame_done);
+
+	trigger_fake_sof_event(ctrl);
 
 	check_args.expect_inner = job->frame_seq_no;
 	if (mtk_cam_ctrl_wait_event(ctrl, check_for_inner, &check_args,
-				    999)) {
+				    1001)) {
 		dev_info(dev, "[%s] check_for_inner timeout: expected in=0x%x\n",
 			 __func__, check_args.expect_inner);
+		mtk_cam_seninf_dump_current_status(job->src_ctx->seninf);
 		goto SWITCH_FAILURE;
 	}
 
@@ -1268,6 +1296,8 @@ static void mtk_cam_ctrl_raw_switch_flow(struct mtk_cam_job *job)
 
 	mtk_cam_ctx_engine_off(ctx);
 	mtk_cam_watchdog_stop(&ctrl->watchdog);
+	/* disable irq first */
+	mtk_cam_ctx_engine_disable_irq(ctx);
 	mtk_cam_ctx_engine_reset(ctx);
 
 	/* re-initialized the new stream required engines with raw switch flow */
@@ -1302,6 +1332,8 @@ static void mtk_cam_ctrl_raw_switch_flow(struct mtk_cam_job *job)
 
 	mtk_cam_job_update_clk(job);
 
+	/* enable irq before stream on */
+	mtk_cam_ctx_engine_enable_irq(ctx);
 	/**
 	 * Reuse stream on flow to start the new stream of the new sensor
 	 */
@@ -1700,6 +1732,9 @@ void mtk_cam_ctrl_stop(struct mtk_cam_ctrl *cam_ctrl)
 	}
 	read_unlock(&cam_ctrl->list_lock);
 
+	if (ctx->seninf)
+		mtk_cam_seninf_set_abort(ctx->seninf);
+
 	mtk_cam_watchdog_stop(&cam_ctrl->watchdog);
 
 	/* this would be time consuming */
@@ -1905,8 +1940,10 @@ static void mtk_cam_watchdog_sensor_worker(struct work_struct *work)
 	mtk_dump_debug_for_no_vsync(ctx);
 	vsync_collector_dump(&ctrl->vsync_col);
 
-	mtk_cam_event_error(ctrl, MSG_VSYNC_TIMEOUT);
-	WRAP_AEE_EXCEPTION(MSG_VSYNC_TIMEOUT, "watchdog timeout");
+	if (!mtk_cam_is_display_ic(ctx)) {
+		mtk_cam_event_error(ctrl, MSG_VSYNC_TIMEOUT);
+		WRAP_AEE_EXCEPTION(MSG_VSYNC_TIMEOUT, "watchdog timeout");
+	}
 
 EXIT_WORK:
 	complete(&wd->work_complete);
@@ -2265,8 +2302,16 @@ int mtk_cam_ctrl_dump_request(struct mtk_cam_device *cam,
 		goto SKIP_SCHEDULE_WORK;
 	}
 
-	if (mtk_cam_ctrl_get(ctrl))
+	if (mtk_cam_ctrl_get(ctrl)) {
+		complete(&wd->work_complete);
 		goto SKIP_SCHEDULE_WORK;
+	}
+
+	if (ctrl->hw_hang_count_down != 0) {
+		mtk_cam_ctrl_put(ctrl);
+		complete(&wd->work_complete);
+		goto SKIP_SCHEDULE_WORK;
+	}
 
 	mtk_cam_watchdog_schedule_job_dump(wd, desc);
 
@@ -2294,6 +2339,6 @@ int mtk_cam_ctrl_notify_hw_hang(struct mtk_cam_device *cam,
 	 * count frames before doing recovery to avoid various hw timing.
 	 * 'set 2 to enable recovery'
 	 */
-	ctrl->hw_hang_count_down = 0;
+	ctrl->hw_hang_count_down = (disable_recover_flow) ? 0 : 2;
 	return 0;
 }

@@ -58,7 +58,7 @@ struct mtk_cam_seninf_ops *g_seninf_ops;
 
 /* aov sensor use */
 struct mtk_seninf_aov_param g_aov_param;
-struct seninf_ctx *aov_ctx[6];
+struct seninf_ctx *aov_ctx[AOV_SENINF_NUM];
 
 #ifdef CSI_EFUSE_SET
 #include <linux/nvmem-consumer.h>
@@ -127,6 +127,10 @@ static const char * const eye_scan_names[] = {
 
 static const char * const mux_range_name[] = {
 	MUX_RANGE_NAMES
+};
+
+static const char * const muxvr_range_name[] = {
+	MUXVR_RANGE_NAMES
 };
 
 static const char * const cammux_range_name[] = {
@@ -324,7 +328,7 @@ static ssize_t debug_ops_store(struct device *dev,
 	char *token = NULL;
 	char *sbuf = kzalloc(sizeof(char) * (count + 1), GFP_KERNEL);
 	char *s = sbuf;
-	int ret, i, csi_port, val_signed, rg_idx = -1, eye_scan_rg_idx = -1;
+	int ret, i, csi_port, val_signed = -1, rg_idx = -1, eye_scan_rg_idx = -1;
 	unsigned int num_para = 0;
 	char *arg[REG_OPS_CMD_MAX_NUM];
 	struct seninf_core *core = dev_get_drvdata(dev);
@@ -821,6 +825,7 @@ static int get_seninf_ops(struct device *dev, struct seninf_core *core)
 				// Support phy 3.0 & phy 3.1
 				if (i == SENINF_PHY_3_1) {
 					g_seninf_ops = &mtk_csi_phy_3_1;
+					core->is_mt6878 = true;
 					dev_info(dev, "%s: INFO: phy config mtk-csi-phy-3-1\n", __func__);
 				} else {
 					g_seninf_ops = &mtk_csi_phy_3_0;
@@ -864,6 +869,21 @@ static int get_seninf_ops(struct device *dev, struct seninf_core *core)
 		dev_info(dev,
 				"%s: INFO:  try get mux_range property '%s' is found, cam_type_cnt %d\n",
 				__func__, mux_range_name[i], cam_type_cnt);
+
+		ret = of_property_read_u32_index(dev->of_node, muxvr_range_name[i],
+						0, &read_prop_test);
+		if (ret == 0) {
+			core->is_porting_muxvr_range = true;
+			dev_info(dev,
+				"%s: found muxvr_range proprety '%s' successfully, is_porting_muxvr_range %d\n",
+				__func__, mux_range_name[i], core->is_porting_muxvr_range);
+
+		} else {
+			dev_info(dev,
+				"%s: ERROR: try get muxvr_range property '%s' not found with ret %d\n",
+				__func__, mux_range_name[i], ret);
+		}
+
 	}
 
 	for (i = 0; i < cam_type_cnt; i++) {
@@ -901,6 +921,26 @@ static int get_seninf_ops(struct device *dev, struct seninf_core *core)
 				"%s: ERROR: read property index:(cammux_range_name[%d] (second)) failed, not modify pointer, ret:%d\n",
 				__func__, i, ret);
 			return -1;
+		}
+
+		if (core->is_porting_muxvr_range) {
+			ret = of_property_read_u32_index(dev->of_node, muxvr_range_name[i],
+						0, &core->muxvr_range[i].first);
+			if (ret) {
+				dev_info(dev,
+					"%s: ERROR: read property index:(muxvr_range_name[%d] (first)) failed, not modify pointer, ret:%d\n",
+					__func__, i, ret);
+				return -1;
+			}
+
+			ret = of_property_read_u32_index(dev->of_node, muxvr_range_name[i],
+							1, &core->muxvr_range[i].second);
+			if (ret) {
+				dev_info(dev,
+					"%s: ERROR: read property index:(muxvr_range_name[%d] (second)) failed, not modify pointer, ret:%d\n",
+					__func__, i, ret);
+				return -1;
+			}
 		}
 	}
 
@@ -1011,30 +1051,43 @@ static int seninf_core_probe(struct platform_device *pdev)
 	u32 tmp_no = 0;
 	struct device_node *tmp_node;
 
+	device_enable_async_suspend(dev);
+
 	core = devm_kzalloc(&pdev->dev, sizeof(*core), GFP_KERNEL);
-	if (!core)
+	if (!core) {
+		dev_err(dev, "%s: kzalloc core failed\n", __func__);
+		WRAP_AEE_EXCEPTION("seninf_core_probe", "Kzalloc");
 		return -ENOMEM;
+	}
 
 	dev_set_drvdata(dev, core);
 	core->dev = dev;
 	mutex_init(&core->mutex);
 	mutex_init(&core->cammux_page_ctrl_mutex);
+	mutex_init(&core->seamless_vsync_debug_mutex);
 	mutex_init(&core->seninf_top_mux_mutex);
 	INIT_LIST_HEAD(&core->list);
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "base");
 	core->reg_if = devm_ioremap_resource(dev, res);
-	if (IS_ERR(core->reg_if))
+	if (IS_ERR(core->reg_if)) {
+		dev_err(dev, "%s: ioremap core->reg_if failed\n", __func__);
+		WRAP_AEE_EXCEPTION("seninf_core_probe", "ioremap reg_if");
 		return PTR_ERR(core->reg_if);
+	}
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "ana-rx");
 	core->reg_ana = devm_ioremap_resource(dev, res);
-	if (IS_ERR(core->reg_ana))
+	if (IS_ERR(core->reg_ana)) {
+		dev_err(dev, "%s: ioremap core->reg_ana failed\n", __func__);
+		WRAP_AEE_EXCEPTION("seninf_core_probe", "ioremap reg_ana");
 		return PTR_ERR(core->reg_ana);
+	}
 
 	ret = get_seninf_ops(dev, core);
 	if (ret) {
-		dev_info(dev, "failed to get seninf ops\n");
+		dev_err(dev, "%s: get_seninf_ops failed\n", __func__);
+		WRAP_AEE_EXCEPTION("seninf_core_probe", "Get Seninf Ops");
 		return ret;
 	}
 	mtk_cam_seninf_init_res(core);
@@ -1047,15 +1100,14 @@ static int seninf_core_probe(struct platform_device *pdev)
 	/* Return: non-zero IRQ number on success, negative error number on failure. */
 	irq = platform_get_irq_byname(pdev, "seninf-irq");
 	if (irq <= 0) {
-		dev_info(dev,
-			"failed to get seninf-irq number, ret:%d\n",
-			irq);
+		dev_err(dev, "%s: failed to get seninf-irq number, ret:%d\n", __func__, irq);
 		//return -ENODEV;
 	} else {
 		ret = devm_request_threaded_irq(dev, irq, mtk_irq_seninf,
 					mtk_thread_irq_seninf, 0, dev_name(dev), core);
 		if (ret) {
-			dev_info(dev, "failed to request seninf-irq=%d\n", irq);
+			dev_err(dev, "%s: Request seninf-irq failed\n", __func__);
+			WRAP_AEE_EXCEPTION("seninf_core_probe", "Request seninf-irq");
 			return ret;
 		}
 		dev_info(dev, "registered seninf-irq=%d\n", irq);
@@ -1063,9 +1115,7 @@ static int seninf_core_probe(struct platform_device *pdev)
 
 	irq = platform_get_irq_byname(pdev, "tsrec-irq");
 	if (irq <= 0) {
-		dev_info(dev,
-			"failed to get tsrec-irq number, ret:%d\n",
-			irq);
+		dev_err(dev, "%s: failed to get tsrec-irq number, ret:%d\n", __func__, irq);
 		//return -ENODEV;
 	} else
 		mtk_cam_seninf_tsrec_irq_init(core, irq);
@@ -1101,7 +1151,7 @@ static int seninf_core_probe(struct platform_device *pdev)
 	/* vcore node get */
 	core->dvfsrc_vcore_power = devm_regulator_get_optional(dev, "dvfsrc-vcore");
 	if (IS_ERR(core->dvfsrc_vcore_power)) {
-		dev_info(dev, "failed to get dvfsrc-vcore\n");
+		dev_err(dev, "%s: failed to get dvfsrc-vcore\n", __func__);
 		core->dvfsrc_vcore_power = NULL;
 	}
 
@@ -1109,7 +1159,7 @@ static int seninf_core_probe(struct platform_device *pdev)
 	for (i = 0; i < CLK_MAXCNT; i++) {
 		core->clk[i] = devm_clk_get(dev, clk_names[i]);
 		if (IS_ERR(core->clk[i])) {
-			dev_info(dev, "failed to get %s\n", clk_names[i]);
+			dev_err(dev, "%s: failed to get %s\n", __func__, clk_names[i]);
 			core->clk[i] = NULL;
 			//return -EINVAL;
 		}
@@ -1144,29 +1194,30 @@ static int seninf_core_probe(struct platform_device *pdev)
 
 	ret = of_platform_populate(dev->of_node, NULL, NULL, dev);
 	if (ret) {
-		dev_info(dev, "%s: failed to create sub devices\n", __func__);
+		dev_err(dev, "%s: create sub devices failed\n", __func__);
+		WRAP_AEE_EXCEPTION("seninf_core_probe", "Create Sub Devices");
 		return ret;
 	}
 
 #ifdef SENINF_DVFS_READY
 	ret = seninf_dfs_init(&core->dfs, dev);
 	if (ret) {
-		dev_info(dev, "%s: failed to init dfs\n", __func__);
+		dev_err(dev, "%s: failed to init dfs\n", __func__);
 		//return ret;
 	}
 #endif
 
 	ret = device_create_file(dev, &dev_attr_status);
 	if (ret)
-		dev_info(dev, "failed to create sysfs status\n");
+		dev_err(dev, "%s: failed to create sysfs status\n", __func__);
 
 	ret = device_create_file(dev, &dev_attr_debug_ops);
 	if (ret)
-		dev_info(dev, "failed to create sysfs debug ops\n");
+		dev_err(dev, "%s: failed to create sysfs debug ops\n", __func__);
 
 	ret = device_create_file(dev, &dev_attr_err_status);
 	if (ret)
-		dev_info(dev, "failed to create sysfs status\n");
+		dev_err(dev, "%s: failed to create sysfs status\n", __func__);
 
 	seninf_core_pm_runtime_enable(core);
 
@@ -1174,8 +1225,7 @@ static int seninf_core_probe(struct platform_device *pdev)
 	core->seninf_kworker_task = kthread_run(kthread_worker_fn,
 				&core->seninf_worker, "seninf_worker");
 	if (IS_ERR(core->seninf_kworker_task)) {
-		dev_info(dev, "%s: failed to start seninf kthread worker\n",
-			__func__);
+		dev_err(dev, "%s: failed to start seninf kthread worker\n", __func__);
 		core->seninf_kworker_task = NULL;
 	} else {
 		dev_info(dev, "%s: seninf kthread worker set prio to fifo\n", __func__);
@@ -1546,9 +1596,9 @@ static int set_aov_test_model_param(struct seninf_ctx *ctx,
 	} else {
 		pm_runtime_put_sync(ctx->dev);
 		/* array size of aov_ctx[] is
-		 * 6: most number of sensors support
+		 * AOV_SENINF_NUM: most number of sensors support
 		 */
-		if (g_aov_param.sensor_idx < 6) {
+		if (g_aov_param.sensor_idx < AOV_SENINF_NUM) {
 			aov_ctx[g_aov_param.sensor_idx] = NULL;
 			memset(&g_aov_param, 0, sizeof(struct mtk_seninf_aov_param));
 		}
@@ -1608,7 +1658,7 @@ static int set_test_model(struct seninf_ctx *ctx, char enable)
 	if (enable) {
 		ret = pm_runtime_get_sync(ctx->dev);
 		if (ret < 0) {
-			dev_info(ctx->dev, "%s pm_runtime_get_sync ret %d\n", __func__, ret);
+			dev_info(ctx->dev, "[%s] pm_runtime_get_sync ret %d\n", __func__, ret);
 			pm_runtime_put_noidle(ctx->dev);
 			return ret;
 		}
@@ -2030,6 +2080,23 @@ static int debug_err_detect_initialize(struct seninf_ctx *ctx)
 #ifdef ERR_DETECT_TEST
 		ctx_->test_cnt = 0;
 #endif
+		/* debug dump cur status initialize */
+		ctx->debug_cur_sys_time_in_ns = 0;
+		ctx->debug_cur_dphy_irq = 0;
+		ctx->debug_cur_cphy_irq = 0;
+		ctx->debug_cur_mac_irq = 0;
+		ctx->debug_cur_temp = 0;
+		ctx->debug_cur_seninf_irq = 0;
+		ctx->debug_cur_mac_csi2_size_chk_ctrl0 = 0;
+		ctx->debug_cur_mac_csi2_size_chk_ctrl1 = 0;
+		ctx->debug_cur_mac_csi2_size_chk_ctrl2 = 0;
+		ctx->debug_cur_mac_csi2_size_chk_ctrl3 = 0;
+		ctx->debug_cur_mac_csi2_size_chk_ctrl4 = 0;
+		ctx->debug_cur_mac_csi2_size_chk_rcv0 = 0;
+		ctx->debug_cur_mac_csi2_size_chk_rcv1 = 0;
+		ctx->debug_cur_mac_csi2_size_chk_rcv2 = 0;
+		ctx->debug_cur_mac_csi2_size_chk_rcv3 = 0;
+		ctx->debug_cur_mac_csi2_size_chk_rcv4 = 0;
 	}
 
 	return 0;
@@ -2166,12 +2233,14 @@ static int seninf_s_stream(struct v4l2_subdev *sd, int enable)
 #endif /*INIT_DESKEW_DEBUG*/
 
 	/* get current sensor idx by get_sensor_idx */
-	core->current_sensor_id = get_sensor_idx(ctx);
-	if (core->current_sensor_id < 0) {
-		dev_info(ctx->dev,
-			"[%s] get_sensor_idx[%d] fail\n",
-			__func__, core->current_sensor_id);
-		return core->current_sensor_id;
+	if (!ctx->is_test_model) {
+		core->current_sensor_id = get_sensor_idx(ctx);
+		if (core->current_sensor_id < 0) {
+			dev_info(ctx->dev,
+				"[%s] get_sensor_idx[%d] fail\n",
+				__func__, core->current_sensor_id);
+			return core->current_sensor_id;
+		}
 	}
 
 	if (core->aov_abnormal_init_flag) {
@@ -2267,9 +2336,9 @@ static int seninf_s_stream(struct v4l2_subdev *sd, int enable)
 			dev_info(ctx->dev,
 				"[%s] set aov real sensor off\n", __func__);
 			/* array size of aov_ctx[] is
-			 * 6: most number of sensors support
+			 * AOV_SENINF_NUM: most number of sensors support
 			 */
-			if (g_aov_param.sensor_idx < 6) {
+			if (g_aov_param.sensor_idx < AOV_SENINF_NUM) {
 				aov_ctx[g_aov_param.sensor_idx] = NULL;
 				memset(&g_aov_param, 0,
 					sizeof(struct mtk_seninf_aov_param));
@@ -2289,6 +2358,9 @@ static int seninf_s_stream(struct v4l2_subdev *sd, int enable)
 	/* reset all sentest flag */
 	ctx->allow_adjust_isp_en = false;
 	ctx->single_raw_streaming_en = false;
+	ctx->seamless_vsync_debug_seninf_en = false;
+	ctx->core->seamless_vsync_debug_en = false;
+	ctx->set_abort_flag = false;
 
 	return 0;
 }
@@ -2304,7 +2376,8 @@ static int s_update_isp_clk_en(struct seninf_ctx *ctx, void *arg)
 
 	ctx->allow_adjust_isp_en = *en;
 
-	dev_info(ctx->dev, "en: %d, allow_adjust_isp_en  is %d\n",
+	if (*en)
+		dev_info(ctx->dev, "en: %d, allow_adjust_isp_en  is %d\n",
 				*en, ctx->allow_adjust_isp_en);
 
 	return 0;
@@ -2475,9 +2548,9 @@ static int seninf_real_sensor_for_aov_param(struct seninf_ctx *ctx, u32 enable)
 		if (!core->pwr_refcnt_for_aov) {
 			dev_info(ctx->dev, "[%s] set aov real sensor off\n", __func__);
 			/* because array size of aov_ctx[] is
-			 * 6: most number of sensors support
+			 * AOV_SENINF_NUM: most number of sensors support
 			 */
-			if (g_aov_param.sensor_idx < 6) {
+			if (g_aov_param.sensor_idx < AOV_SENINF_NUM) {
 				aov_ctx[g_aov_param.sensor_idx] = NULL;
 				memset(&g_aov_param, 0, sizeof(struct mtk_seninf_aov_param));
 			}
@@ -2492,10 +2565,10 @@ static int seninf_real_sensor_for_aov_param(struct seninf_ctx *ctx, u32 enable)
 			/* get aov sensor idx by get_sensor_idx */
 			core->aov_sensor_id = get_sensor_idx(ctx);
 			/* array size of aov_ctx[] is
-			 * 6: most number of sensors support
+			 * AOV_SENINF_NUM: most number of sensors support
 			 */
 			if (core->aov_sensor_id >= 0 &&
-				core->aov_sensor_id < 6) {
+				core->aov_sensor_id < AOV_SENINF_NUM) {
 				g_aov_param.sensor_idx = core->aov_sensor_id;
 				aov_ctx[g_aov_param.sensor_idx] = ctx;
 				g_aov_param.is_test_model = 0;
@@ -2645,10 +2718,10 @@ static int mtk_cam_seninf_set_ctrl(struct v4l2_ctrl *ctrl)
 					/* get aov sensor idx by get_sensor_idx */
 					core->aov_sensor_id = get_sensor_idx(ctx);
 					/* array size of aov_ctx[] is
-					 * 6: most number of sensors support
+					 * AOV_SENINF_NUM: most number of sensors support
 					 */
 					if (core->aov_sensor_id >= 0 &&
-						core->aov_sensor_id < 6) {
+						core->aov_sensor_id < AOV_SENINF_NUM) {
 						g_aov_param.sensor_idx = core->aov_sensor_id;
 						aov_ctx[g_aov_param.sensor_idx] = ctx;
 						g_aov_param.is_test_model = 0;
@@ -2680,9 +2753,9 @@ static int mtk_cam_seninf_set_ctrl(struct v4l2_ctrl *ctrl)
 					dev_info(ctx->dev,
 						"[%s] set aov real sensor off\n", __func__);
 					/* array size of aov_ctx[] is
-					 * 6: most number of sensors support
+					 * AOV_SENINF_NUM: most number of sensors support
 					 */
-					if (g_aov_param.sensor_idx < 6) {
+					if (g_aov_param.sensor_idx < AOV_SENINF_NUM) {
 						aov_ctx[g_aov_param.sensor_idx] = NULL;
 						memset(&g_aov_param, 0,
 							sizeof(struct mtk_seninf_aov_param));
@@ -2718,8 +2791,28 @@ static int mtk_cam_seninf_set_ctrl(struct v4l2_ctrl *ctrl)
 	return ret;
 }
 
+static int mtk_cam_seninf_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct seninf_ctx *ctx = ctrl_hdl_to_ctx(ctrl->handler);
+	int ret;
+
+	switch (ctrl->id) {
+	case V4L2_CID_GET_CSI2_IRQ_STATUS:
+		ret = mtk_cam_seninf_get_csi_irq_status(&ctx->subdev, ctrl);
+		break;
+	default:
+		ret = 0;
+		dev_info(ctx->dev, "%s Unhandled id:0x%x\n",
+			 __func__, ctrl->id);
+		break;
+	}
+
+	return ret;
+}
+
 static const struct v4l2_ctrl_ops seninf_ctrl_ops = {
 	.s_ctrl = mtk_cam_seninf_set_ctrl,
+	.g_volatile_ctrl = mtk_cam_seninf_g_volatile_ctrl,
 };
 
 static int seninf_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
@@ -2745,13 +2838,22 @@ static int seninf_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 static int seninf_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct seninf_ctx *ctx = sd_to_ctx(sd);
+	unsigned int i;
 
 	mutex_lock(&ctx->mutex);
 	ctx->open_refcnt--;
-
+	ctx->is_aov_real_sensor = 0;
 
 	if (!ctx->open_refcnt) {
 		dev_info(ctx->dev, "%s open_refcnt %d\n", __func__, ctx->open_refcnt);
+
+		/* clear aov_ctx */
+		for (i = 0; i < AOV_SENINF_NUM; i++) {
+			if (aov_ctx[i] == ctx) {
+				aov_ctx[i] = NULL;
+				dev_info(ctx->dev, "%s clear aov_ctx[%u]\n", __func__, i);
+			}
+		}
 #ifdef SENINF_DEBUG
 		if (ctx->is_test_streamon)
 			seninf_test_streamon(ctx, 0);
@@ -2831,6 +2933,16 @@ static const struct v4l2_ctrl_config cfg_s_real_sensor_for_aov_param = {
 	.step = 1,
 };
 
+static const struct v4l2_ctrl_config cfg_g_csi2_irq_status = {
+	.ops = &seninf_ctrl_ops,
+	.id = V4L2_CID_GET_CSI2_IRQ_STATUS,
+	.name = "get_csi2_irq_status",
+	.type = V4L2_CTRL_TYPE_INTEGER,
+	.flags = V4L2_CTRL_FLAG_READ_ONLY|V4L2_CTRL_FLAG_VOLATILE,
+	.max = 0x7fffffff,
+	.step = 1,
+};
+
 static int seninf_initialize_controls(struct seninf_ctx *ctx)
 {
 	struct v4l2_ctrl_handler *handler;
@@ -2854,6 +2966,7 @@ static int seninf_initialize_controls(struct seninf_ctx *ctx)
 
 	v4l2_ctrl_new_custom(handler, &cfg_s_test_model_for_aov_param, NULL);
 	v4l2_ctrl_new_custom(handler, &cfg_s_real_sensor_for_aov_param, NULL);
+	v4l2_ctrl_new_custom(handler, &cfg_g_csi2_irq_status, NULL);
 
 	if (handler->error) {
 		ret = handler->error;
@@ -3100,9 +3213,9 @@ static int seninf_probe(struct platform_device *pdev)
 
 	memset(&g_aov_param, 0, sizeof(struct mtk_seninf_aov_param));
 	/* array size of aov_ctx[] is
-	 * 6: most number of sensors support
+	 * AOV_SENINF_NUM: most number of sensors support
 	 */
-	for (i = 0; i < 6; i++)
+	for (i = 0; i < AOV_SENINF_NUM; i++)
 		aov_ctx[i] = NULL;
 
 	dev_info(dev, "%s: port=%d\n", __func__, ctx->port);
@@ -3427,12 +3540,6 @@ static int set_vcore_power(struct seninf_ctx *ctx, u64 data_rate)
 	seninf_logd(ctx,
 		"line:%d,data rate(%llu),is_cphy(%u),is_4d1c(%d)\n",
 		__LINE__, data_rate, ctx->is_cphy, ctx->is_4d1c);
-	if (data_rate <= 0) {
-		seninf_logi(ctx,
-			"line:%d,please check data rate(%llu),is_cphy(%u),is_4d1c(%d)\n",
-			__LINE__, data_rate, ctx->is_cphy, ctx->is_4d1c);
-		return -EINVAL;
-	}
 	/* loop compare data rate -> if match condition, then break return vcore voltage */
 	if (!ctx->is_cphy) {	// Dphy
 		/* dphy vcore range */
@@ -3616,6 +3723,7 @@ static int runtime_resume(struct device *dev)
 	u64 data_rate = 0;
 	unsigned long flags;
 
+
 	mutex_lock(&core->mutex);
 
 	if (vc)
@@ -3681,7 +3789,7 @@ static int runtime_resume(struct device *dev)
 		 * set csi clk according to vcore range
 		 */
 		data_rate = ctx->mipi_pixel_rate * bit_per_pixel;
-		if (data_rate > 0) {
+		if (data_rate > 0 || ctx->is_test_model) {
 			seninf_logd(ctx,
 				"data rate(%llu),mipi pixel rate(%lld),bit_per_pixel(%d),num_data_lanes(%d)\n",
 				data_rate, ctx->mipi_pixel_rate, bit_per_pixel, ctx->num_data_lanes);
@@ -3730,10 +3838,12 @@ static int runtime_resume(struct device *dev)
 			if (core->pwr_refcnt_for_aov &&
 				!(core->aov_sensor_id < 0) &&
 				!(core->current_sensor_id < 0) &&
-				(core->current_sensor_id != core->aov_sensor_id))
-				seninf_logi(ctx, "aov sensor streaming on scp now, won't disable mux/cammux\n");
-			else {
-				seninf_logi(ctx, "common sensor streaming, disable mux/cammux for initialization\n");
+				(core->current_sensor_id != core->aov_sensor_id)) {
+				seninf_logi(ctx, "aov sensor streaming on scp now, disable mux/cammux instead of aov path\n");
+				g_seninf_ops->_disable_all_mux(ctx);
+				g_seninf_ops->_disable_all_cammux(ctx);
+			} else {
+				seninf_logi(ctx, "common sensor streaming, disable mux/cammux instead of aov path\n");
 				g_seninf_ops->_disable_all_mux(ctx);
 				g_seninf_ops->_disable_all_cammux(ctx);
 			}
@@ -3938,8 +4048,10 @@ int mtk_cam_seninf_dump(struct v4l2_subdev *sd, u32 seq_id, bool force_check)
 #if ESD_RESET_SUPPORT
 			if (ret != 0) {
 				reset_by_user = is_reset_by_user(sd_to_ctx(sd));
-				if (!reset_by_user)
+				if (!reset_by_user){
 					reset_sensor(sd_to_ctx(sd));
+					ctx->esd_status_flag = 1;
+				}
 			}
 #endif
 		} else
@@ -3953,6 +4065,23 @@ int mtk_cam_seninf_dump(struct v4l2_subdev *sd, u32 seq_id, bool force_check)
 		 __func__, ret, seq_id, force_check, reset_by_user);
 
 	return (ret && reset_by_user);
+}
+
+int mtk_cam_seninf_get_csi_irq_status(struct v4l2_subdev *sd, struct v4l2_ctrl *ctrl)
+{
+	struct seninf_ctx *ctx = sd_to_ctx(sd);
+
+#ifdef __XIAOMI_CAMERA__
+	ctrl->val  = (g_seninf_ops->_get_csi_irq_status(sd_to_ctx(sd)));
+	dev_info(ctx->dev,"update mipi status 0x%x\n", ctrl->val);
+#else
+	ctrl->val  = (g_seninf_ops->_get_csi_irq_status(sd_to_ctx(sd)) & 0x7fff)
+							| (ctx->esd_status_flag << 15);
+	ctx->esd_status_flag = 0;
+	dev_info(ctx->dev,"SENINF%d_CSI2_IRQ_STATUS(0x%x)\n", ctx->seninfIdx, ctrl->val);
+
+#endif
+	return 0;
 }
 
 int mtk_cam_seninf_dump_current_status(struct v4l2_subdev *sd)
@@ -3988,6 +4117,26 @@ int mtk_cam_seninf_dump_current_status(struct v4l2_subdev *sd)
 		 __func__, ret, reset_by_user);
 
 	return (ret && reset_by_user);
+}
+
+int mtk_cam_seninf_set_abort(struct v4l2_subdev *sd)
+{
+	int ret = 0;
+	struct seninf_ctx *ctx = NULL;
+
+	if(sd) {
+		ctx = sd_to_ctx(sd);
+	} else {
+		ret = -1;
+		pr_info("[%s] Null v4l2_subdev sd\n", __func__);
+		return ret;
+	}
+
+	ctx->set_abort_flag = 1;
+
+	dev_info(ctx->dev, "%s Streaming(%d) set_abort_flag(%d)\n",
+		__func__, ctx->streaming, ctx->set_abort_flag);
+	return ret;
 }
 
 void mtk_cam_seninf_set_secure(struct v4l2_subdev *sd, int enable, u64 SecInfo_addr)
@@ -4286,37 +4435,8 @@ int mtk_cam_seninf_aov_runtime_resume(unsigned int sensor_id,
 			return -EINVAL;
 		}
 		/* SCP side to AP */
-		if (core->aov_csi_clk_switch_flag == CSI_CLK_130) {
-			/* set the parent of clk as parent_clk */
-			if (core->clk[ctx->clk_index] && core->clk[ctx->clk_src_index]) {
-				ret = clk_set_parent(
-					core->clk[ctx->clk_index],
-					core->clk[ctx->clk_src_index]);
-				if (ret < 0) {
-					dev_info(ctx->dev,
-						"[%s] clk[%u]:%s set_parent clk_src[%u]:%s(fail),ret(%d)\n",
-						__func__,
-						ctx->clk_index, clk_names[ctx->clk_index],
-						ctx->clk_src_index,
-						clk_names[ctx->clk_src_index],
-						ret);
-					mutex_unlock(&core->mutex);
-					return ret;
-				}
-				dev_info(ctx->dev,
-					"[%s] clk[%u]:%s set_parent clk_src[%u]:%s(correct),ret(%d)\n",
-					__func__,
-					ctx->clk_index, clk_names[ctx->clk_index],
-					ctx->clk_src_index, clk_names[ctx->clk_src_index],
-					ret);
-			} else {
-				dev_info(ctx->dev,
-					"[%s] Please check clk get whether NULL?\n",
-					__func__);
-				mutex_unlock(&core->mutex);
-				return -EINVAL;
-			}
-		}
+		dev_info(ctx->dev, "[%s] set csi_ck in power on.\n", __func__);
+
 		/* set register to switch phya clock source */
 		ret = enable_phya_clk(ctx);
 		if (ret < 0) {
@@ -4328,6 +4448,15 @@ int mtk_cam_seninf_aov_runtime_resume(unsigned int sensor_id,
 		dev_info(ctx->dev, "[%s] phya clock source switch to scp side\n", __func__);
 	}
 #endif
+
+	if (core->refcnt == 1) {
+		seninf_logi(ctx, "aov sensor streaming on kernel now, disable mux/cammux instead of aov path\n");
+		g_seninf_ops->_disable_all_mux(ctx);
+		g_seninf_ops->_disable_all_cammux(ctx);
+	} else if (core->refcnt > 1) {
+		seninf_logi(ctx, "aov sensor streaming on kernel now, do not disable mux/cammux instead of aov path\n");
+	}
+
 	mutex_unlock(&core->mutex);
 
 	switch (aov_seninf_deinit_type) {
@@ -4414,6 +4543,8 @@ int mtk_cam_seninf_aov_reset_sensor(unsigned int sensor_id)
 		aov_switch_i2c_bus_scl_aux(ctx, SCL3);
 		/* switch i2c bus sda from apmcu to scp */
 		aov_switch_i2c_bus_sda_aux(ctx, SDA3);
+		/* switch aov pm ops: pm_relax */
+		aov_switch_pm_ops(ctx, AOV_PM_RELAX);
 	}
 
 	mutex_unlock(&core->mutex);
@@ -4421,3 +4552,55 @@ int mtk_cam_seninf_aov_reset_sensor(unsigned int sensor_id)
 	return 0;
 }
 EXPORT_SYMBOL(mtk_cam_seninf_aov_reset_sensor);
+
+int mtk_cam_seninf_aov_sensor_set_mclk(unsigned int sensor_id, bool enable)
+{
+	struct seninf_ctx *ctx = NULL;
+	unsigned int real_sensor_id = 0;
+	struct v4l2_subdev *sensor_sd = NULL;
+	struct v4l2_ctrl *ctrl = NULL;
+
+	pr_info("[%s] sensor_id(%d)\n", __func__, sensor_id);
+
+	if (g_aov_param.is_test_model) {
+		real_sensor_id = 5;
+	} else {
+		if (sensor_id == g_aov_param.sensor_idx) {
+			real_sensor_id = g_aov_param.sensor_idx;
+			pr_info("input sensor id(%u)(success)\n", real_sensor_id);
+		} else {
+			real_sensor_id = sensor_id;
+			pr_info("input sensor id(%u)(fail)\n", real_sensor_id);
+			seninf_aee_print(
+				"[AEE] [%s] input sensor id(%u)(fail)",
+				__func__, real_sensor_id);
+			return -ENODEV;
+		}
+	}
+	/* debug use
+	 * if (g_aov_param.sensor_idx)
+	 *	pr_info("g_aov_param.sensor_idx %d\n",
+	 *		g_aov_param.sensor_idx);
+	 */
+	if (aov_ctx[real_sensor_id] != NULL) {
+		pr_info("[%s] sensor idx(%u)\n", __func__, real_sensor_id);
+		ctx = aov_ctx[real_sensor_id];
+	} else {
+		pr_info("[%s] Can't find ctx from input sensor id!\n", __func__);
+		return -ENODEV;
+	}
+
+	sensor_sd = ctx->sensor_sd;
+	ctrl = v4l2_ctrl_find(sensor_sd->ctrl_handler,
+			V4L2_CID_MTK_SENSOR_SET_AOV_MCLK);
+	if (!ctrl) {
+		dev_info(ctx->dev, "V4L2_CID_MTK_SENSOR_SET_AOV_MCLK %s\n",
+			sensor_sd->name);
+		return -EINVAL;
+	}
+
+	v4l2_ctrl_s_ctrl(ctrl, enable);
+
+	return 0;
+}
+EXPORT_SYMBOL(mtk_cam_seninf_aov_sensor_set_mclk);

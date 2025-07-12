@@ -5,7 +5,7 @@
 #define __MTK_CAM_SENINF_DEF_H__
 
 
-#define SENINF_VC_MAXCNT 9
+#define SENINF_VC_MAXCNT 10
 #define SENINF_DEF_PIXEL_MODE 3
 #define SENINF_CLK_MARGIN_IN_PERCENT 0
 
@@ -111,6 +111,7 @@
 
 /* define csi ck for deskew */
 #define SENINF_CLK_312_MHZ 312000000
+#define SENINF_CLK_343_MHZ 343000000
 #define SENINF_CLK_356_MHZ 356000000
 #define SENINF_CLK_416_MHZ 416000000
 #define SENINF_CLK_499_2MHZ 499200000
@@ -146,6 +147,12 @@ enum CSI_PORT {
 	CSI_PORT_5B,
 	CSI_PORT_MAX_NUM,
 	CSI_PORT_MIN_SPLIT_PORT = CSI_PORT_0A,
+};
+
+enum MIPI_CSI_TOP_CTRL_ENUM {
+	MIPI_CSI_TOP_CTRL_0,
+	MIPI_CSI_TOP_CTRL_1,
+	MIPI_CSI_TOP_CTRL_NUM,
 };
 
 #define SENINF_CSI_PORT_NAMES \
@@ -300,6 +307,13 @@ enum CAM_TYPE_ENUM {
 	"mux-raw-range", \
 	"mux-pdp-range", \
 	"mux-uisp-range", \
+
+#define MUXVR_RANGE_NAMES \
+	"muxvr-camsv-sat-range", \
+	"muxvr-camsv-normal-range", \
+	"muxvr-raw-range", \
+	"muxvr-pdp-range", \
+	"muxvr-uisp-range", \
 
 #define CAMMUX_RANGE_NAMES \
 	"cammux-camsv-sat-range", \

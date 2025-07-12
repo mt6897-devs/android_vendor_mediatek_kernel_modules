@@ -14,6 +14,7 @@
 #include <linux/vmalloc.h>
 
 #include <soc/mediatek/smi.h>
+#include <soc/mediatek/mmdvfs_v3.h>
 
 #include "mtk_cam.h"
 #include "mtk_cam-sv-regs.h"
@@ -140,20 +141,44 @@ static int sv_process_fsm(struct mtk_camsv_device *sv_dev,
 			  int *recovered_done)
 {
 	struct engine_fsm *fsm = &sv_dev->fsm;
-	unsigned int done_type, sof_type, i;
+	unsigned int i, done_type, sof_type, drop_type, done_tags = 0;
 	int recovered = 0;
+
+	sof_type = irq_info->irq_type & BIT(CAMSYS_IRQ_FRAME_START);
+	if (sof_type) {
+		/* when first tag comes: 1. reset drop tags 2. update used_tags */
+		if (irq_info->sof_tags & sv_dev->first_tag) {
+			sv_dev->drop_tags = 0;
+			sv_dev->used_tags = 0;
+			for (i = 0; i < MAX_SV_HW_GROUPS; i++)
+				sv_dev->used_tags |= sv_dev->active_group_info[i];
+		}
+	}
+
+	drop_type = irq_info->irq_type & BIT(CAMSYS_IRQ_FRAME_DROP);
+	if (drop_type) {
+		irq_info->irq_type &= ~drop_type;
+		sv_dev->drop_tags |= irq_info->done_tags;
+	}
 
 	done_type = irq_info->irq_type & BIT(CAMSYS_IRQ_FRAME_DONE);
 	if (done_type) {
+		irq_info->irq_type &= ~done_type;
+		done_tags = irq_info->done_tags;
+	}
+
+	if (drop_type || done_type) {
 		int cookie_done;
 		int ret;
 
-		sv_dev->handled_tags |= irq_info->done_tags;
+		sv_dev->handled_tags |= done_tags;
+		sv_dev->handled_tags |= sv_dev->drop_tags;
 		sv_dev->handled_tags &= sv_dev->used_tags;
 
 		if (sv_dev->handled_tags == sv_dev->used_tags) {
 			ret = engine_fsm_hw_done(fsm, &cookie_done);
 			if (ret > 0) {
+				irq_info->irq_type |= BIT(CAMSYS_IRQ_FRAME_DONE);
 				irq_info->cookie_done = cookie_done;
 				sv_dev->handled_tags = 0;
 			} else {
@@ -161,18 +186,16 @@ static int sv_process_fsm(struct mtk_camsv_device *sv_dev,
 				dev_dbg(sv_dev->dev, "warn: fake done in/out: 0x%x 0x%x\n",
 							 irq_info->frame_idx_inner,
 							 irq_info->frame_idx);
-				irq_info->irq_type &= ~done_type;
 				irq_info->cookie_done = 0;
 				sv_dev->handled_tags = 0;
 			}
 		} else {
 			dev_dbg(sv_dev->dev, "%s: not all group done yet: in/out: 0x%x 0x%x tag used/handled: 0x%x 0x%x\n",
 				__func__,
-				irq_info->frame_idx,
 				irq_info->frame_idx_inner,
+				irq_info->frame_idx,
 				sv_dev->used_tags,
 				sv_dev->handled_tags);
-			irq_info->irq_type &= ~done_type;
 			irq_info->cookie_done = 0;
 		}
 	}
@@ -181,13 +204,9 @@ static int sv_process_fsm(struct mtk_camsv_device *sv_dev,
 	if (sof_type) {
 		irq_info->irq_type &= ~sof_type;
 
-		/* when first tag comes: 1. update irq_type 2. update used_tags */
-		if (irq_info->sof_tags & sv_dev->first_tag) {
+		/* when first tag comes: update irq_type */
+		if (irq_info->sof_tags & sv_dev->first_tag)
 			irq_info->irq_type |= BIT(CAMSYS_IRQ_FRAME_START_DCIF_MAIN);
-			sv_dev->used_tags = 0;
-			for (i = 0; i < MAX_SV_HW_GROUPS; i++)
-				sv_dev->used_tags |= sv_dev->active_group_info[i];
-		}
 
 		/* when last tag comes: 1. update irq_type 2. update fsm */
 		if (irq_info->sof_tags & sv_dev->last_tag) {
@@ -504,6 +523,18 @@ int mtk_cam_sv_dmao_common_config(struct mtk_camsv_device *sv_dev,
 			th_setting.pultra_len2_th);
 		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON4_LEN2,
 			th_setting.dvfs_len2_th);
+
+		/* stg wdma 1 */
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG1_EN_CTRL,
+			0xFFF);
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG1_INIT_MODE_CTRL,
+			0xFFF);
+
+		/* stg wdma 2 */
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG2_EN_CTRL,
+			0xFFF);
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG2_INIT_MODE_CTRL,
+			0xFFF);
 		break;
 	case CAMSV_1:
 		/* wdma 1 */
@@ -543,6 +574,18 @@ int mtk_cam_sv_dmao_common_config(struct mtk_camsv_device *sv_dev,
 			th_setting.pultra_len2_th);
 		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON4_LEN2,
 			th_setting.dvfs_len2_th);
+
+		/* stg wdma 1 */
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG1_EN_CTRL,
+			0xFFF);
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG1_INIT_MODE_CTRL,
+			0xFFF);
+
+		/* stg wdma 2 */
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG2_EN_CTRL,
+			0xFFF);
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG2_INIT_MODE_CTRL,
+			0xFFF);
 		break;
 	case CAMSV_2:
 		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON3_IMG,
@@ -562,6 +605,12 @@ int mtk_cam_sv_dmao_common_config(struct mtk_camsv_device *sv_dev,
 			th_setting.pultra_len1_th);
 		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON4_LEN,
 			th_setting.dvfs_len1_th);
+
+		/* stg wdma 1 */
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG1_EN_CTRL,
+			0xFFF);
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG1_INIT_MODE_CTRL,
+			0xFFF);
 		break;
 	case CAMSV_3:
 		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON3_IMG,
@@ -581,6 +630,12 @@ int mtk_cam_sv_dmao_common_config(struct mtk_camsv_device *sv_dev,
 			th_setting.pultra_len1_th);
 		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON4_LEN,
 			th_setting.dvfs_len1_th);
+
+		/* stg wdma 1 */
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG1_EN_CTRL,
+			0xFFF);
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG1_INIT_MODE_CTRL,
+			0xFFF);
 		break;
 	case CAMSV_4:
 		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON3_IMG,
@@ -591,6 +646,12 @@ int mtk_cam_sv_dmao_common_config(struct mtk_camsv_device *sv_dev,
 			th_setting.pultra_th);
 		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON4_IMG,
 			th_setting.dvfs_th);
+
+		/* stg wdma 1 */
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG1_EN_CTRL,
+			0xFFF);
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG1_INIT_MODE_CTRL,
+			0xFFF);
 		break;
 	case CAMSV_5:
 		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON3_IMG,
@@ -601,6 +662,12 @@ int mtk_cam_sv_dmao_common_config(struct mtk_camsv_device *sv_dev,
 			th_setting.pultra_th);
 		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON4_IMG,
 			th_setting.dvfs_th);
+
+		/* stg wdma 1 */
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG1_EN_CTRL,
+			0xFFF);
+		CAMSV_WRITE_REG(sv_dev->base_dma + REG_CAMSVSTG1_INIT_MODE_CTRL,
+			0xFFF);
 		break;
 	}
 
@@ -626,6 +693,24 @@ int mtk_cam_sv_dmao_common_config(struct mtk_camsv_device *sv_dev,
 		th_setting.cq2_urgent_th);
 	CAMSV_WRITE_REG(sv_dev->base_scq + REG_CAMSV_M2_CQI_ORIRDMA_CON4,
 		th_setting.cq2_dvfs_th);
+
+	dev_dbg(sv_dev->dev, "img:0x%x_0x%x_0x%x_0x%x img2:0x%x_0x%x_0x%x_0x%x len:0x%x_0x%x_0x%x_0x%x len2:0x%x_0x%x_0x%x_0x%x\n",
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON3_IMG),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON2_IMG),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON1_IMG),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON4_IMG),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON3_IMG2),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON2_IMG2),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON1_IMG2),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON4_IMG2),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON3_LEN),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON2_LEN),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON1_LEN),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON4_LEN),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON3_LEN2),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON2_LEN2),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON1_LEN2),
+		CAMSV_READ_REG(sv_dev->base_dma + REG_CAMSVDMATOP_CON4_LEN2));
 
 	return ret;
 }
@@ -955,61 +1040,10 @@ int mtk_cam_sv_golden_set(struct mtk_camsv_device *sv_dev, bool is_golden_set)
 {
 	int ret = 0;
 
-	switch (sv_dev->id) {
-	case CAMSV_0:
-		/* force ultra */
-		mtk_smi_golden_set(is_golden_set, true, sv_dev->larb_id, 1);
-		mtk_smi_golden_set(is_golden_set, true, sv_dev->larb_id, 2);
-		/* ostd */
-		if (is_golden_set) {
-			mtk_smi_larb_bw_set(&sv_dev->larb_pdev->dev, 1, 0x40);
-			mtk_smi_larb_bw_set(&sv_dev->larb_pdev->dev, 2, 0x40);
-		}
-		/* cmd th */
-		mtk_smi_golden_set(is_golden_set, false, 0, 0);
-		break;
-	case CAMSV_1:
-		/* force ultra */
-		mtk_smi_golden_set(is_golden_set, true, sv_dev->larb_id, 1);
-		mtk_smi_golden_set(is_golden_set, true, sv_dev->larb_id, 2);
-		/* ostd */
-		if (is_golden_set) {
-			mtk_smi_larb_bw_set(&sv_dev->larb_pdev->dev, 1, 0x40);
-			mtk_smi_larb_bw_set(&sv_dev->larb_pdev->dev, 2, 0x40);
-		}
-		break;
-	case CAMSV_2:
-		/* force ultra */
-		mtk_smi_golden_set(is_golden_set, true, sv_dev->larb_id, 4);
-		/* ostd */
-		if (is_golden_set)
-			mtk_smi_larb_bw_set(&sv_dev->larb_pdev->dev, 4, 0x40);
-		break;
-	case CAMSV_3:
-		/* force ultra */
-		mtk_smi_golden_set(is_golden_set, true, sv_dev->larb_id, 5);
-		/* ostd */
-		if (is_golden_set)
-			mtk_smi_larb_bw_set(&sv_dev->larb_pdev->dev, 5, 0x40);
-		break;
-	case CAMSV_4:
-		/* force ultra */
-		mtk_smi_golden_set(is_golden_set, true, sv_dev->larb_id, 6);
-		/* ostd */
-		if (is_golden_set)
-			mtk_smi_larb_bw_set(&sv_dev->larb_pdev->dev, 6, 0x40);
-		break;
-	case CAMSV_5:
-		/* force ultra */
-		mtk_smi_golden_set(is_golden_set, true, sv_dev->larb_id, 7);
-		/* ostd */
-		if (is_golden_set)
-			mtk_smi_larb_bw_set(&sv_dev->larb_pdev->dev, 7, 0x40);
-		break;
-	}
+	mtk_mmdvfs_camsv_dc_enable(sv_dev->id, is_golden_set);
 
-	dev_info(sv_dev->dev, "%s: is_golden_set:%d larb_id:%d",
-		__func__, (is_golden_set) ? 1 : 0, sv_dev->larb_id);
+	dev_info(sv_dev->dev, "%s: is_golden_set:%d",
+		__func__, (is_golden_set) ? 1 : 0);
 
 	return ret;
 }
@@ -1041,15 +1075,18 @@ int mtk_cam_sv_dev_config(struct mtk_camsv_device *sv_dev,
 
 	sv_dev->handled_tags = 0;
 	sv_dev->used_tags = 0;
+	sv_dev->drop_tags = 0;
 
 	sv_dev->streaming_tag_cnt = 0;
 	sv_dev->sof_count = 0;
 	sv_dev->tg_cnt = 0;
 
+	atomic_set(&sv_dev->is_seamless, 0);
+
 	mtk_cam_sv_dmao_common_config(sv_dev, 0, 0, 0, 0);
 	mtk_cam_sv_cq_config(sv_dev, sub_ratio);
 
-	dev_info(sv_dev->dev, "[%s] sub_ratio:%d\n", __func__, sub_ratio);
+	dev_info(sv_dev->dev, "[%s] sub_ratio:%d set seamless check\n", __func__, sub_ratio);
 
 	return 0;
 }
@@ -1400,9 +1437,13 @@ void camsv_handle_err(
 	/* check dma fifo status */
 	if (!(data->err_tags) && (err_status & CAMSVCENTRAL_DMA_SRAM_FULL_ST)) {
 		dev_info_ratelimited(sv_dev->dev, "camsv dma fifo full\n");
-          	mtk_cam_seninf_dump_current_status(ctx->seninf);
-		mtk_cam_ctrl_dump_request(sv_dev->cam, CAMSYS_ENGINE_CAMSV, sv_dev->id,
-				   frame_idx_inner, MSG_CAMSV_ERROR);
+		mtk_cam_seninf_dump_current_status(ctx->seninf);
+
+		if (atomic_read(&sv_dev->is_seamless)) {
+			mtk_cam_seninf_dump_current_status(ctx->seninf);
+			mtk_cam_ctrl_dump_request(sv_dev->cam, CAMSYS_ENGINE_CAMSV, sv_dev->id,
+				frame_idx_inner, MSG_CAMSV_SEAMLESS_ERROR);
+		}
 
 		mtk_cam_ctrl_notify_hw_hang(sv_dev->cam,
 					    CAMSYS_ENGINE_CAMSV, sv_dev->id,
@@ -1572,7 +1613,7 @@ static irqreturn_t mtk_irq_camsv_sof(int irq, void *data)
 			irq_info.done_tags |= (1 << i);
 	}
 	if (irq_info.done_tags)
-		irq_info.irq_type |= (1 << CAMSYS_IRQ_FRAME_DONE);
+		irq_info.irq_type |= (1 << CAMSYS_IRQ_FRAME_DROP);
 
 	if (tg_cnt < sv_dev->tg_cnt)
 		sv_dev->tg_cnt = tg_cnt + BIT(8);
@@ -1774,8 +1815,8 @@ static irqreturn_t mtk_thread_irq_camsv(int irq, void *data)
 
 static int mtk_camsv_pm_suspend(struct device *dev)
 {
-	struct mtk_camsv_device *sv_dev = dev_get_drvdata(dev);
-	u32 val;
+	//struct mtk_camsv_device *sv_dev = dev_get_drvdata(dev);
+	//u32 val;
 	int ret;
 
 	dev_dbg(dev, "- %s\n", __func__);
@@ -1785,6 +1826,7 @@ static int mtk_camsv_pm_suspend(struct device *dev)
 
 	/* Disable ISP's view finder and wait for TG idle */
 	dev_info(dev, "camsv suspend, disable VF\n");
+#ifdef NOT_READY
 	val = readl(sv_dev->base + REG_CAMSVCENTRAL_VF_CON);
 	writel(val & (~CAMSVCENTRAL_VF_CON_VFDATA_EN),
 		sv_dev->base + REG_CAMSVCENTRAL_VF_CON);
@@ -1802,16 +1844,16 @@ static int mtk_camsv_pm_suspend(struct device *dev)
 	val = readl(sv_dev->base + REG_CAMSVCENTRAL_SEN_MODE);
 	writel(val & (~CAMSVCENTRAL_SEN_MODE_CMOS_EN),
 		sv_dev->base + REG_CAMSVCENTRAL_SEN_MODE);
-
+#endif
 	/* Force ISP HW to idle */
-	ret = pm_runtime_put_sync(dev);
+	ret = pm_runtime_force_suspend(dev);
 	return ret;
 }
 
 static int mtk_camsv_pm_resume(struct device *dev)
 {
-	struct mtk_camsv_device *sv_dev = dev_get_drvdata(dev);
-	u32 val;
+	//struct mtk_camsv_device *sv_dev = dev_get_drvdata(dev);
+	//u32 val;
 	int ret;
 
 	dev_dbg(dev, "- %s\n", __func__);
@@ -1820,10 +1862,10 @@ static int mtk_camsv_pm_resume(struct device *dev)
 		return 0;
 
 	/* Force ISP HW to resume */
-	ret = pm_runtime_get_sync(dev);
+	ret = pm_runtime_force_resume(dev);
 	if (ret)
 		return ret;
-
+#ifdef NOT_READY
 	/* Enable CMOS */
 	dev_info(dev, "camsv resume, enable CMOS/VF\n");
 	val = readl(sv_dev->base + REG_CAMSVCENTRAL_SEN_MODE);
@@ -1834,7 +1876,7 @@ static int mtk_camsv_pm_resume(struct device *dev)
 	val = readl(sv_dev->base + REG_CAMSVCENTRAL_VF_CON);
 	writel(val | CAMSVCENTRAL_VF_CON_VFDATA_EN,
 		sv_dev->base + REG_CAMSVCENTRAL_VF_CON);
-
+#endif
 	return 0;
 }
 
@@ -2184,6 +2226,7 @@ static int mtk_camsv_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct mtk_camsv_device *sv_dev;
 	int ret;
+	int sv_two_smi_en = 0, sv_support_two_smi_out = 0;
 
 	sv_dev = devm_kzalloc(dev, sizeof(*sv_dev), GFP_KERNEL);
 	if (!sv_dev)
@@ -2196,7 +2239,10 @@ static int mtk_camsv_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	if (sv_dev->id < MULTI_SMI_SV_HW_NUM) {
+	CALL_PLAT_V4L2(
+		get_sv_two_smi_setting, &sv_two_smi_en, &sv_support_two_smi_out);
+
+	if (sv_support_two_smi_out && sv_dev->id < MULTI_SMI_SV_HW_NUM) {
 		ret = mtk_cam_qos_probe(dev, &sv_dev->qos, SMI_PORT_SV_TYPE0_NUM);
 		if (ret)
 			goto UNREGISTER_PM_NOTIFIER;
@@ -2253,6 +2299,7 @@ static int mtk_camsv_runtime_suspend(struct device *dev)
 	dev_dbg(dev, "%s:disable clock\n", __func__);
 
 	mtk_cam_reset_qos(dev, &sv_dev->qos);
+	mtk_cam_sv_golden_set(sv_dev, false);
 
 	for (i = 0; i < sv_dev->num_clks; i++)
 		clk_disable_unprepare(sv_dev->clks[i]);
