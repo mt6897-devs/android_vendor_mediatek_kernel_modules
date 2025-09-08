@@ -190,6 +190,7 @@ struct mtk_camsv_device {
 	struct platform_device *larb_pdev;
 	struct mtk_camsys_qos qos;
 	unsigned int larb_master_id[MAX_SMI_PORT_NUM];
+	unsigned int larb_id;
 
 	/* sensor resource data */
 	struct mtk_cam_resource_sensor_v2 sensor_res;

@@ -1335,7 +1335,7 @@ void mtk_cam_sv_debug_dump(struct mtk_camsv_device *sv_dev, unsigned int dump_ta
 	unsigned int tag_fbc_status, tag_addr, tag_addr_msb;
 	unsigned int frm_size, frm_size_r, grab_pix, grab_lin;
 	unsigned int dcif_set, dcif_sel;
-	unsigned int first_tag, last_tag;
+	unsigned int first_tag, last_tag, group_info;
 
 	dump_tags = (dump_tags) ? dump_tags : BIT(CAMSV_MAX_TAGS) - 1;
 
@@ -1398,22 +1398,19 @@ void mtk_cam_sv_debug_dump(struct mtk_camsv_device *sv_dev, unsigned int dump_ta
 	/* check dcif setting */
 	dcif_set = readl_relaxed(sv_dev->base_inner + REG_E_CAMSVCENTRAL_DCIF_SET);
 	dcif_sel = readl_relaxed(sv_dev->base_inner + REG_E_CAMSVCENTRAL_DCIF_SEL);
+	dev_info_ratelimited(sv_dev->dev, "dcif_set:0x%x dcif_sel:0x%x\n",
+		dcif_set, dcif_sel);
 
 	/* check tag/group setting */
 	first_tag = readl_relaxed(sv_dev->base_inner + REG_CAMSVCENTRAL_FIRST_TAG);
 	last_tag = readl_relaxed(sv_dev->base_inner + REG_CAMSVCENTRAL_LAST_TAG);
-
-	dev_info_ratelimited(sv_dev->dev,
-		"dcif_set:0x%x dcif_sel:0x%x first_tag:0x%x last_tag:0x%x group[0]:0x%x group[1]:0x%x group[2]:0x%x group[3]:0x%x\n",
-	dcif_set, dcif_sel, first_tag, last_tag,
-	readl_relaxed(sv_dev->base_inner + REG_CAMSVCENTRAL_GROUP_TAG0 +
-		CAMSVCENTRAL_GROUP_TAG_SHIFT * 0),
-	readl_relaxed(sv_dev->base_inner + REG_CAMSVCENTRAL_GROUP_TAG0 +
-		CAMSVCENTRAL_GROUP_TAG_SHIFT * 1),
-	readl_relaxed(sv_dev->base_inner + REG_CAMSVCENTRAL_GROUP_TAG0 +
-		CAMSVCENTRAL_GROUP_TAG_SHIFT * 2),
-	readl_relaxed(sv_dev->base_inner + REG_CAMSVCENTRAL_GROUP_TAG0 +
-			CAMSVCENTRAL_GROUP_TAG_SHIFT * 3));
+	for (i = 0; i < MAX_SV_HW_GROUPS; i++) {
+		group_info = readl_relaxed(sv_dev->base_inner + REG_CAMSVCENTRAL_GROUP_TAG0 +
+			CAMSVCENTRAL_GROUP_TAG_SHIFT * i);
+		dev_info_ratelimited(sv_dev->dev, "group[%d]:0x%x\n", i, group_info);
+	}
+	dev_info_ratelimited(sv_dev->dev, "first_tag:0x%x last_tag:0x%x\n",
+		first_tag, last_tag);
 
 	/* dump dma debug data */
 	camsv_dump_dma_debug_data(sv_dev);
@@ -1442,13 +1439,10 @@ void camsv_handle_err(
 		dev_info_ratelimited(sv_dev->dev, "camsv dma fifo full\n");
 		mtk_cam_seninf_dump_current_status(ctx->seninf);
 
-		if (atomic_read(&sv_dev->is_seamless))
+		if (atomic_read(&sv_dev->is_seamless)) {
+			mtk_cam_seninf_dump_current_status(ctx->seninf);
 			mtk_cam_ctrl_dump_request(sv_dev->cam, CAMSYS_ENGINE_CAMSV, sv_dev->id,
 				frame_idx_inner, MSG_CAMSV_SEAMLESS_ERROR);
-		else {
-			if (cur_platform->hw->platform_id == 6989)
-				mtk_cam_ctrl_dump_request(sv_dev->cam, CAMSYS_ENGINE_CAMSV, sv_dev->id,
-					frame_idx_inner, MSG_CAMSV_ERROR);
 		}
 
 		mtk_cam_ctrl_notify_hw_hang(sv_dev->cam,
@@ -1821,8 +1815,8 @@ static irqreturn_t mtk_thread_irq_camsv(int irq, void *data)
 
 static int mtk_camsv_pm_suspend(struct device *dev)
 {
-	struct mtk_camsv_device *sv_dev = dev_get_drvdata(dev);
-	u32 val;
+	//struct mtk_camsv_device *sv_dev = dev_get_drvdata(dev);
+	//u32 val;
 	int ret;
 
 	dev_dbg(dev, "- %s\n", __func__);
@@ -1832,6 +1826,7 @@ static int mtk_camsv_pm_suspend(struct device *dev)
 
 	/* Disable ISP's view finder and wait for TG idle */
 	dev_info(dev, "camsv suspend, disable VF\n");
+#ifdef NOT_READY
 	val = readl(sv_dev->base + REG_CAMSVCENTRAL_VF_CON);
 	writel(val & (~CAMSVCENTRAL_VF_CON_VFDATA_EN),
 		sv_dev->base + REG_CAMSVCENTRAL_VF_CON);
@@ -1849,16 +1844,16 @@ static int mtk_camsv_pm_suspend(struct device *dev)
 	val = readl(sv_dev->base + REG_CAMSVCENTRAL_SEN_MODE);
 	writel(val & (~CAMSVCENTRAL_SEN_MODE_CMOS_EN),
 		sv_dev->base + REG_CAMSVCENTRAL_SEN_MODE);
-
+#endif
 	/* Force ISP HW to idle */
-	ret = pm_runtime_put_sync(dev);
+	ret = pm_runtime_force_suspend(dev);
 	return ret;
 }
 
 static int mtk_camsv_pm_resume(struct device *dev)
 {
-	struct mtk_camsv_device *sv_dev = dev_get_drvdata(dev);
-	u32 val;
+	//struct mtk_camsv_device *sv_dev = dev_get_drvdata(dev);
+	//u32 val;
 	int ret;
 
 	dev_dbg(dev, "- %s\n", __func__);
@@ -1867,10 +1862,10 @@ static int mtk_camsv_pm_resume(struct device *dev)
 		return 0;
 
 	/* Force ISP HW to resume */
-	ret = pm_runtime_get_sync(dev);
+	ret = pm_runtime_force_resume(dev);
 	if (ret)
 		return ret;
-
+#ifdef NOT_READY
 	/* Enable CMOS */
 	dev_info(dev, "camsv resume, enable CMOS/VF\n");
 	val = readl(sv_dev->base + REG_CAMSVCENTRAL_SEN_MODE);
@@ -1881,7 +1876,7 @@ static int mtk_camsv_pm_resume(struct device *dev)
 	val = readl(sv_dev->base + REG_CAMSVCENTRAL_VF_CON);
 	writel(val | CAMSVCENTRAL_VF_CON_VFDATA_EN,
 		sv_dev->base + REG_CAMSVCENTRAL_VF_CON);
-
+#endif
 	return 0;
 }
 
@@ -2094,6 +2089,13 @@ static int mtk_camsv_of_probe(struct platform_device *pdev,
 					pdev->dev.of_node, "mediatek,larbs", i);
 		if (!larb_node) {
 			dev_info(dev, "failed to get larb node\n");
+			continue;
+		}
+
+		ret = of_property_read_u32(larb_node, "mediatek,larb-id",
+								   &sv_dev->larb_id);
+		if (ret) {
+			dev_info(dev, "missing larb id property\n");
 			continue;
 		}
 
@@ -2355,3 +2357,4 @@ struct platform_driver mtk_cam_sv_driver = {
 		.pm     = &mtk_camsv_pm_ops,
 	}
 };
+

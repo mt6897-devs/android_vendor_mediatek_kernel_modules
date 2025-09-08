@@ -176,7 +176,7 @@ static inline bool valid_cq_execution(struct transition_param *p)
 	if (unlikely(!p->s_params))
 		return false;
 
-	return (p->event_ts - p->info->sof_ts_ns) < SCQ_THRES_FROM_F_SOF_NS;
+	return (p->event_ts - p->info->sof_l_ts_ns) < SCQ_THRES_FROM_F_SOF_NS;
 }
 
 static inline int guard_apply_sensor_subsample(struct state_accessor *s_acc,
@@ -222,6 +222,11 @@ static inline bool is_isp_ge_outer(int isp_state)
 static inline bool is_isp_ge_processing(int isp_state)
 {
 	return isp_state >= S_ISP_PROCESSING;
+}
+
+static inline bool is_isp_aborted(int isp_state)
+{
+	return isp_state == S_ISP_ABORTED;
 }
 
 static inline bool current_sensor_ready(struct state_accessor *s_acc)

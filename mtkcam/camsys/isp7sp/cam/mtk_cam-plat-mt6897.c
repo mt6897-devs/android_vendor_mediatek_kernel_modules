@@ -672,7 +672,7 @@ static int query_caci_size(int w, int h, size_t *size)
 
 static int query_max_exp_support(u32 raw_idx)
 {
-	// raw_idx: {1,2,3...} = {RAW_A, RAW_B, RAW_C}
+	// raw_idx: {0,1,2...} = {RAW_A, RAW_B, RAW_C}
 	return 2;
 }
 

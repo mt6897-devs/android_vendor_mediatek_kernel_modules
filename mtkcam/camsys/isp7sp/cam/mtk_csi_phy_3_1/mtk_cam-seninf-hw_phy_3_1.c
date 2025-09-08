@@ -2304,18 +2304,18 @@ static int csirx_mac_top_setting(struct seninf_ctx *ctx)
 	/* Select share bus option */
 	SENINF_BITS(csirx_mac_top, CSIRX_MAC_TOP_CTRL,
 				RG_8PIX_SHARE_16PIX_DATA,
-				(ctx->port >= CSI_PORT_MIN_SPLIT_PORT) ? 1 : 0);
+				(ctx->port >= CSI_PORT_MIN_SPLIT_PORT) ? 1 : 0);//porting for rayas, after check can remove, rayas mac page13 15
 
 	/* Enable C / D phy */
 	if (ctx->is_cphy) {
 		/* C-PHY */
 		SENINF_BITS(csirx_mac_top,
 					CSIRX_MAC_TOP_PHY_CTRL_CSI0,
-					PHY_SENINF_MUX0_DPHY_EN,
+					PHY_SENINF_MUX0_DPHY_EN,//porting for rayas, after check can remove, rayas mac page13, 15
 					0); //Disable Dphy
 		SENINF_BITS(csirx_mac_top,
 					CSIRX_MAC_TOP_PHY_CTRL_CSI0,
-					PHY_SENINF_MUX0_CPHY_EN,
+					PHY_SENINF_MUX0_CPHY_EN,//porting for rayas, after check can remove, rayas mac page13, 15
 					1);
 		/* C-PHY split mode */
 		SENINF_BITS(csirx_mac_top, CSIRX_MAC_TOP_PHY_CTRL_CSI0,
@@ -2325,11 +2325,11 @@ static int csirx_mac_top_setting(struct seninf_ctx *ctx)
 		/* D-PHY */
 		SENINF_BITS(csirx_mac_top,
 					CSIRX_MAC_TOP_PHY_CTRL_CSI0,
-					PHY_SENINF_MUX0_CPHY_EN,
+					PHY_SENINF_MUX0_CPHY_EN,//porting for rayas, after check can remove, rayas mac page13, 15
 					0); //Disable Cphy
 		SENINF_BITS(csirx_mac_top,
 					CSIRX_MAC_TOP_PHY_CTRL_CSI0,
-					PHY_SENINF_MUX0_DPHY_EN,
+					PHY_SENINF_MUX0_DPHY_EN,//porting for rayas, after check can remove, rayas mac page13, 15
 					1);
 		/* D-PHY split mode */
 		SENINF_BITS(csirx_mac_top, CSIRX_MAC_TOP_PHY_CTRL_CSI0,
@@ -2449,7 +2449,7 @@ static int csirx_mac_csi_setting(struct seninf_ctx *ctx)
 	SENINF_BITS(csirx_mac_csi,
 				CSIRX_MAC_CSI2_OPT,
 				RG_CSI2_CPHY_SEL,
-				(ctx->is_cphy) ? 1 : 0);
+				(ctx->is_cphy) ? 1 : 0);//porting for rayas, after check can remove, rayas mac page13, 15
 
 	/* enable csi2 lane */
 	switch (ctx->port) {
@@ -2465,25 +2465,25 @@ static int csirx_mac_csi_setting(struct seninf_ctx *ctx)
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE3_EN, 0);
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE2_EN, 0);
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE1_EN, 0);
-			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE0_EN, 1);
+			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE0_EN, 1);//porting for rayas, after check can remove, rayas mac page13, 15
 			break;
 		case 2:
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE3_EN, 0);
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE2_EN, 0);
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE1_EN, 1);
-			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE0_EN, 1);
+			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE0_EN, 1);//porting for rayas, after check can remove, rayas mac page13, 15
 			break;
 		case 3:
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE3_EN, 0);
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE2_EN, 1);
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE1_EN, 1);
-			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE0_EN, 1);
+			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE0_EN, 1);//porting for rayas, after check can remove, rayas mac page13, 15
 			break;
 		case 4:
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE3_EN, 1);
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE2_EN, 1);
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE1_EN, 1);
-			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE0_EN, 1);
+			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE0_EN, 1);//porting for rayas, after check can remove, rayas mac page13, 15
 			break;
 		default:
 			dev_info(ctx->dev, "[%s][ERROR] invalid lane num(%d)\n",
@@ -2504,13 +2504,13 @@ static int csirx_mac_csi_setting(struct seninf_ctx *ctx)
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE3_EN, 0);
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE2_EN, 0);
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE1_EN, 0);
-			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE0_EN, 1);
+			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE0_EN, 1);//porting for rayas, after check can remove, rayas mac page13, 15
 			break;
 		case 2:
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE3_EN, 0);
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE2_EN, 0);
 			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE1_EN, 1);
-			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE0_EN, 1);
+			SENINF_BITS(csirx_mac_csi, CSIRX_MAC_CSI2_EN, CSI2_LANE0_EN, 1);//porting for rayas, after check can remove, rayas mac page13, 15
 			break;
 		default:
 			dev_info(ctx->dev, "[%s][ERROR] invalid lane num(%d)\n",
@@ -2519,7 +2519,7 @@ static int csirx_mac_csi_setting(struct seninf_ctx *ctx)
 		}
 		break;
 
-	case CSI_PORT_0B:
+	case CSI_PORT_0B://rayas mac page13, 15 remove port B?
 	case CSI_PORT_1B:
 	case CSI_PORT_2B:
 	case CSI_PORT_3B:
@@ -2634,13 +2634,13 @@ static int csirx_mac_csi_setting(struct seninf_ctx *ctx)
 		/* reset HDR_MODE_0 */
 		SENINF_BITS(csirx_mac_csi,
 					CSIRX_MAC_CSI2_HDR_MODE_0,
-					RG_CSI2_HEADER_MODE,
+					RG_CSI2_HEADER_MODE,//porting for rayas, after check can remove, rayas mac page13, 15
 					0);
 
 		/* reset HDR_MODE_0 */
 		SENINF_BITS(csirx_mac_csi,
 					CSIRX_MAC_CSI2_HDR_MODE_0,
-					RG_CSI2_HEADER_LEN,
+					RG_CSI2_HEADER_LEN,//porting for rayas, after check can remove, rayas mac page13, 15
 					0);
 
 		/* Setting DEFAULT RESYNC_MERGE SETTING */
@@ -2664,6 +2664,11 @@ static int csirx_mac_csi_setting(struct seninf_ctx *ctx)
 					RG_CSI2_RESYNC_LRTE_EN,
 					0);
 
+		SENINF_BITS(csirx_mac_csi,
+					CSIRX_MAC_CSI2_RESYNC_MERGE_CTRL,
+					RG_CSI2_RESYNC_CYCLE_CNT_OPT,
+					1);
+
 	} else { //Cphy
 		u8 map_hdr_len[] = {0, 1, 2, 4, 5};
 		u64 cycles = 64;
@@ -2684,12 +2689,12 @@ static int csirx_mac_csi_setting(struct seninf_ctx *ctx)
 
 		SENINF_BITS(csirx_mac_csi,
 					CSIRX_MAC_CSI2_HDR_MODE_0,
-					RG_CSI2_HEADER_MODE,
+					RG_CSI2_HEADER_MODE,//porting for rayas, after check can remove, rayas mac page13, 15
 					2); //cphy
 
 		SENINF_BITS(csirx_mac_csi,
 					CSIRX_MAC_CSI2_HDR_MODE_0,
-					RG_CSI2_HEADER_LEN,
+					RG_CSI2_HEADER_LEN,//porting for rayas, after check can remove, rayas mac page13, 15
 					map_hdr_len[(unsigned int)ctx->num_data_lanes]);
 		/* map_hdr_len[] = {0, 1, 2, 4, 5} */
 
@@ -3816,7 +3821,7 @@ static int csirx_dphy_init_deskew_setting(struct seninf_ctx *ctx, u64 seninf_ck)
 		case SENINF_CLK_312_MHZ:
 			if (data_rate < SENINF_DESKEW_DATA_RATE_3200M) {
 				SENINF_BITS(base, DPHY_RX_DESKEW_TIMING_CTRL,
-					RG_DPHY_RX_DESKEW_SETUP_CNT, 14);
+					RG_DPHY_RX_DESKEW_SETUP_CNT, 14);//porting for rayas, after check can remove, rayas cdphy page13
 			} else {
 				SENINF_BITS(base, DPHY_RX_DESKEW_TIMING_CTRL,
 					RG_DPHY_RX_DESKEW_SETUP_CNT, 9);
@@ -4300,6 +4305,19 @@ static int csirx_cphy_setting(struct seninf_ctx *ctx)
 	case CSI_PORT_3B:
 	case CSI_PORT_4B:
 	case CSI_PORT_5B:
+		SENINF_BITS(baseB, CDPHY_RX_ANA_SETTING_1,
+						RG_CSI0_ASYNC_OPTION, 0xC);
+		SENINF_BITS(baseB, CDPHY_RX_ANA_SETTING_1,
+						RG_AFIFO_DUMMY_VALID_EN, 0x1);
+		SENINF_BITS(baseB, CDPHY_RX_ANA_SETTING_1,
+						RG_AFIFO_DUMMY_VALID_NUM,
+						(ctx->is_4d1c) ? ((ctx->num_data_lanes > 1) ? 0x4: 0x6) : 0x6);
+		SENINF_BITS(baseB, CDPHY_RX_ANA_SETTING_1,
+							AFIFO_DUMMY_VALID_GAP_NUM, 0x1);
+		SENINF_BITS(baseB, CDPHY_RX_ANA_SETTING_1,
+							RG_AFIFO_DUMMY_VALID_PREPARE_NUM, 0x0);
+		SENINF_BITS(baseB, CDPHY_RX_ANA_SETTING_1,
+							AFIFO_DUMMY_VALID_DESKEW_EN, 0x1);
 
 		if (ctx->num_data_lanes != 1) {
 			dev_info(ctx->dev, "[error][%s] invalid ctx->num_data_lanes: %d\n",
@@ -5844,6 +5862,71 @@ static int mtk_cam_seninf_debug_current_status(struct seninf_ctx *ctx)
 
 static int mtk_cam_get_csi_irq_status(struct seninf_ctx *ctx)
 {
+#ifdef __XIAOMI_CAMERA__
+	void *base_csi_mac, *csirx_mac_csi, *pmux;
+	struct seninf_vc *vc;
+	struct seninf_vc_out_dest *dest;
+	int csi_irq_st = 0;
+	int seninf_mux_irq_st = 0;
+	int ecc_err_corrected_cnt = 0, ecc_err_double_cnt = 0, crc_err_cnt = 0, err_lane_resync_cnt = 0, data_not_enough_cnt = 0, fifo_overrun_cnt = 0;
+	int i, j;
+
+	if (!ctx->streaming)
+		return 0;
+
+	base_csi_mac = ctx->reg_csirx_mac_csi[(uint32_t)ctx->port];
+	csi_irq_st = SENINF_READ_REG(base_csi_mac, CSIRX_MAC_CSI2_IRQ_STATUS);
+	SENINF_WRITE_REG(base_csi_mac, CSIRX_MAC_CSI2_IRQ_STATUS, 0xffffffff);
+
+	switch (csi_irq_st) {
+		case 804:
+		case 805:
+			break;
+		default:
+			if (csi_irq_st & RO_CSI2_ECC_ERR_CORRECTED_IRQ_MASK)
+				ecc_err_corrected_cnt++;
+			if (csi_irq_st & RO_CSI2_ECC_ERR_DOUBLE_IRQ_MASK)
+				ecc_err_double_cnt++;
+			if (csi_irq_st & RO_CSI2_CRC_ERR_IRQ_MASK)
+				crc_err_cnt++;
+			if (csi_irq_st & RO_CSI2_ERR_LANE_RESYNC_IRQ_MASK)
+				err_lane_resync_cnt++;
+			if (csi_irq_st & RO_CSI2_RECEIVE_DATA_NOT_ENOUGH_IRQ_MASK)
+				data_not_enough_cnt++;
+			break;
+		}
+
+	// get fifo_overrun_cnt;
+	csirx_mac_csi = ctx->reg_csirx_mac_csi[(uint32_t)ctx->port];
+	for (i = 0; i < ctx->vcinfo.cnt; i++) {
+		vc = &ctx->vcinfo.vc[i];
+		for (j = 0; j < vc->dest_cnt; j++) {
+			dest = &vc->dest[j];
+			pmux = ctx->reg_if_mux[dest->mux];
+			seninf_mux_irq_st = SENINF_READ_REG(pmux, SENINF_MUX_IRQ_STATUS);
+			if (seninf_mux_irq_st & (0x3)) {
+				fifo_overrun_cnt++;
+				SENINF_WRITE_REG(pmux,
+					SENINF_MUX_IRQ_STATUS, 0x103);
+			}
+		}
+	}
+	dev_info(ctx->dev,"update mipi status: %d, %d, %d, %d, %d, %d, %d, %d\n",
+		ecc_err_corrected_cnt,
+		ecc_err_double_cnt,
+		crc_err_cnt,
+		err_lane_resync_cnt,
+		data_not_enough_cnt,
+		fifo_overrun_cnt,
+		ctx->esd_status_flag,
+		ctx->test_cnt);
+
+	return (ecc_err_double_cnt)     |
+		(crc_err_cnt          << 1) |
+		(data_not_enough_cnt  << 2) |
+		(fifo_overrun_cnt     << 3) |
+		(ctx->test_cnt        << 8);
+#else
 	void *base_csi_mac;
 	int ret = 0;
 
@@ -5856,6 +5939,7 @@ static int mtk_cam_get_csi_irq_status(struct seninf_ctx *ctx)
 	SENINF_WRITE_REG(base_csi_mac, CSIRX_MAC_CSI2_IRQ_STATUS, 0xffffffff);
 
 	return ret;
+#endif
 }
 
 static int mtk_cam_seninf_get_tsrec_timestamp(struct seninf_ctx *ctx, void *arg)
@@ -7437,13 +7521,13 @@ static int mtk_cam_seninf_set_reg(struct seninf_ctx *ctx, u32 key, u64 val)
 				return 0;
 			}
 		}
-		core->data_not_enough_detection_cnt = 50;
-		core->err_lane_resync_detection_cnt = 50;
-		core->crc_err_detection_cnt = 50;
-		core->ecc_err_double_detection_cnt = 50;
-		core->ecc_err_corrected_detection_cnt = 50;
-		core->fifo_overrun_detection_cnt = 50;
-		core->size_err_detection_cnt = 50;
+		core->data_not_enough_detection_cnt = 2;
+		core->err_lane_resync_detection_cnt = 600;
+		core->crc_err_detection_cnt = 2;
+		core->ecc_err_double_detection_cnt = 2;
+		core->ecc_err_corrected_detection_cnt = 600;
+		core->fifo_overrun_detection_cnt = 2;
+		core->size_err_detection_cnt = 600;
 		core->csi_irq_en_flag = 1;
 		core->detection_cnt = val;
 		core->err_detect_init_flag = 1;

@@ -38,8 +38,7 @@ static int update_cq_buffer_to_ipi_frame(struct mtk_cam_pool_buffer *cq,
 					 struct mtkcam_ipi_frame_param *fp);
 static int job_debug_dump(struct mtk_cam_job *job, const char *desc,
 			  bool is_exception, int raw_pipe_idx);
-static void job_dump_engines_debug_status(
-	struct mtk_cam_job *job, bool seninf_dump);
+static void job_dump_engines_debug_status(struct mtk_cam_job *job);
 
 static inline int job_debug_exception_dump(struct mtk_cam_job *job,
 					   const char *desc)
@@ -1994,11 +1993,9 @@ static void trigger_error_dump(struct mtk_cam_job *job,
 		 job->scen_str, desc, warn_desc);
 
 	if (!job_debug_exception_dump(job, desc)) {
-
 		if (!strcmp(desc, MSG_CAMSV_ERROR))
 			mtk_smi_dbg_hang_detect("camsys-camsv");
-
-		job_dump_engines_debug_status(job, true);
+		job_dump_engines_debug_status(job);
 
 		mtk_cam_event_error(&ctx->cam_ctrl, desc);
 		WRAP_AEE_EXCEPTION(desc, warn_desc);
@@ -3233,9 +3230,9 @@ static void job_finalize_mstream(struct mtk_cam_job *job)
 }
 
 static void log_transit(struct mtk_cam_job_state *s, int state_type,
-			int old_state, int new_state, int act, bool force_log)
+			int old_state, int new_state, int act)
 {
-	if (force_log || CAM_DEBUG_ENABLED(STATE))
+	if (CAM_DEBUG_ENABLED(STATE))
 		pr_info("%s: #%d %s: %s -> %s, act %d\n",
 			__func__, s->seq_no,
 			str_state_type(state_type),
@@ -3251,7 +3248,7 @@ static void singleframe_on_transit(struct mtk_cam_job_state *s, int state_type,
 	struct mtk_cam_job *job =
 		container_of(s, struct mtk_cam_job, job_state);
 
-	log_transit(s, state_type, old_state, new_state, act, false);
+	log_transit(s, state_type, old_state, new_state, act);
 
 	if (state_type == ISP_STATE) {
 
@@ -3270,17 +3267,7 @@ static void singleframe_on_transit(struct mtk_cam_job_state *s, int state_type,
 				job->timestamp = info->sof_ts_ns;
 				job->timestamp_mono = ktime_get_ns(); /* FIXME */
 				fill_hdr_timestamp(job, info);
-
-				/* log if the last cq done irq is missed */
-				if (old_state != S_ISP_OUTER)
-					log_transit(s, state_type, old_state, new_state, act, true);
 			}
-			break;
-
-		case S_ISP_DONE:
-			/* log if timestamp is 0 due to performance issue */
-			if (unlikely(job->timestamp == 0))
-				log_transit(s, state_type, old_state, new_state, act, true);
 			break;
 		}
 	}
@@ -3293,7 +3280,7 @@ static void mstream_on_transit(struct mtk_cam_job_state *s, int state_type,
 	struct mtk_cam_job *job =
 		container_of(s, struct mtk_cam_job, job_state);
 
-	log_transit(s, state_type, old_state, new_state, act, false);
+	log_transit(s, state_type, old_state, new_state, act);
 
 	if (state_type == ISP_1ST_STATE) {
 		switch (new_state) {
@@ -3331,7 +3318,7 @@ static void extisp_on_transit(struct mtk_cam_job_state *s, int state_type,
 	struct mtk_cam_job *job =
 		container_of(s, struct mtk_cam_job, job_state);
 
-	log_transit(s, state_type, old_state, new_state, act, false);
+	log_transit(s, state_type, old_state, new_state, act);
 
 	if (state_type == ISP_STATE) {
 
@@ -3375,7 +3362,7 @@ static void m2m_on_transit(struct mtk_cam_job_state *s, int state_type,
 	struct mtk_cam_job *job =
 		container_of(s, struct mtk_cam_job, job_state);
 
-	log_transit(s, state_type, old_state, new_state, act, false);
+	log_transit(s, state_type, old_state, new_state, act);
 
 	if (act == ACTION_TRIGGER) {
 		job->timestamp = ktime_get_boottime_ns();
@@ -4908,16 +4895,14 @@ static bool is_sensor_mode_update(struct mtk_cam_job *job)
 	return ret;
 }
 
-static void job_dump_engines_debug_status(
-	struct mtk_cam_job *job, bool seninf_dump)
+static void job_dump_engines_debug_status(struct mtk_cam_job *job)
 {
 	struct mtk_cam_ctx *ctx = job->src_ctx;
 	struct mtk_cam_device *cam = ctx->cam;
 	bool is_srt = is_dc_mode(job) || is_m2m(job);
 
-	mtk_engine_dump_debug_status(
-		cam, job->used_engine, job->enabled_tags, is_srt);
-	if (seninf_dump && ctx->seninf) {
+	mtk_engine_dump_debug_status(cam, job->used_engine, is_srt);
+	if (ctx->seninf) {
 		mtk_cam_seninf_dump(ctx->seninf, job->frame_seq_no, false);
 		vsync_collector_dump(&ctx->cam_ctrl.vsync_col);
 	}
@@ -5019,7 +5004,9 @@ static bool test_do_engine_reset_for_recovery(struct mtk_cam_ctx *ctx)
 		return true;
 	}
 
-	pr_info("%s: ctx-%d skipped\n", __func__, ctx->stream_id);
+	pr_info("%s: ctx-%d skipped sw_recovery_ts:%llu_%llu\n",
+		__func__, ctx->stream_id, ctx->sw_recovery_ts, ts);
+
 	return false;
 }
 
@@ -5140,16 +5127,13 @@ int job_handle_done(struct mtk_cam_job *job)
 		debug_ts[0] = '\0';
 		debug_str_local_ts(job, debug_ts, sizeof(debug_ts));
 
-		dev_info(ctx->cam->dev, "%s: ctx-%d f_seq:0x%x req:%s(%d) pipe:0x%x ts:%lld%s%s\n",
+		dev_dbg(ctx->cam->dev, "%s: ctx-%d f_seq:0x%x req:%s(%d) pipe:0x%x ts:%lld%s%s\n",
 			 __func__, ctx->stream_id,
 			 job->frame_seq_no,
 			 job->req->debug_str, job->req_seq,
 			 job->done_pipe, job->timestamp,
 			 debug_ts,
 			 job->req->is_buf_empty ? " (empty)" : "");
-
-		if (unlikely(job->timestamp == 0))
-			job_dump_engines_debug_status(job, false);
 
 		if (job->done_pipe != used_pipe)
 			dev_info(ctx->cam->dev, "%s: warn. done mismatched. used_pipe:0x%x\n",
@@ -5300,3 +5284,4 @@ int mtk_cam_job_update_clk_switching(struct mtk_cam_job *job, bool begin)
 	return mtk_cam_dvfs_switch_begin(&cam->dvfs, ctx->stream_id,
 					 freq_hz, boostable);
 }
+

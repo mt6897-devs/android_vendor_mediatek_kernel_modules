@@ -2706,7 +2706,7 @@ int ctx_stream_on_seninf_sensor(struct mtk_cam_job *job,
 		for (seninf_pad = PAD_SRC_RAW0, i = 0;
 			  seninf_pad <= PAD_SRC_RAW2; ++seninf_pad, ++i)
 			if (seninf_pad_bitmask & 1 << seninf_pad) {
-				mtk_cam_seninf_set_camtg(seninf, seninf_pad, raw_tg_idx + i);
+				mtk_cam_seninf_set_camtg(seninf, seninf_pad, raw_tg_idx);
 				mtk_cam_seninf_set_pixelmode(seninf, seninf_pad, 3);
 			}
 	}
@@ -3822,7 +3822,7 @@ int mtk_cam_pm_runtime_engines(struct mtk_cam_engines *eng,
 }
 
 void mtk_engine_dump_debug_status(struct mtk_cam_device *cam,
-				  unsigned long engines, unsigned int enabled_tags, bool is_srt)
+				  unsigned long engines, bool is_srt)
 {
 	struct mtk_raw_device *dev;
 	struct mtk_camsv_device *sv_dev;
@@ -3846,7 +3846,7 @@ void mtk_engine_dump_debug_status(struct mtk_cam_device *cam,
 		if (subset & BIT(i)) {
 			sv_dev = dev_get_drvdata(cam->engines.sv_devs[i]);
 
-			mtk_cam_sv_debug_dump(sv_dev, enabled_tags);
+			mtk_cam_sv_debug_dump(sv_dev, 0);
 		}
 	}
 

@@ -24,6 +24,10 @@
 #include "mtk_cam-trace.h"
 #include "mtk_cam-job_utils.h"
 
+static unsigned int disable_recover_flow = 0;
+module_param(disable_recover_flow, uint, 0644);
+MODULE_PARM_DESC(disable_recover_flow, "disable_recover_flow");
+
 #define WATCHDOG_INTERVAL_MS		400
 /*
  * note:
@@ -824,14 +828,11 @@ static int frame_no_to_fs_req_no(struct mtk_cam_ctrl *ctrl, int frame_no,
 	struct mtk_cam_job *job;
 	int do_send_evnt;
 
-	if (frame_no == -1) {
-		pr_info("%s: skip find job, frame_sync_event_cnt(%u)\n",
-			__func__, ctrl->frame_sync_event_cnt);
+	if (frame_no == -1)
 		goto SKIP_FIND_JOB;
-	}
 
 	job = mtk_cam_ctrl_get_job(ctrl, cond_frame_no_belong, &frame_no);
-	if (likely(job)) {
+	if (job) {
 
 		if (ctrl->frame_sync_event_cnt != job->req_seq) {
 			ctrl->fs_event_subframe_cnt = job->frame_cnt;
@@ -841,9 +842,6 @@ static int frame_no_to_fs_req_no(struct mtk_cam_ctrl *ctrl, int frame_no,
 		ctrl->frame_sync_event_cnt = job->req_seq;
 
 		mtk_cam_job_put(job);
-	} else {
-		pr_info("%s: cannot find job, frame_sync_event_cnt(%u)\n",
-			__func__, ctrl->frame_sync_event_cnt);
 	}
 
 SKIP_FIND_JOB:
@@ -1886,12 +1884,10 @@ static void mtk_dump_debug_for_no_vsync(struct mtk_cam_ctx *ctx)
 
 	job = mtk_cam_ctrl_get_job(ctrl, cond_first_job, 0);
 	if (job) {
-		mtk_engine_dump_debug_status(
-			cam, job->used_engine, job->enabled_tags, false);
+		mtk_engine_dump_debug_status(cam, job->used_engine, false);
 		mtk_cam_job_put(job);
 	} else {
-		mtk_engine_dump_debug_status(
-			cam, ctx->used_engine, ctx->enabled_tags, false);
+		mtk_engine_dump_debug_status(cam, ctx->used_engine, false);
 	}
 }
 
@@ -2311,6 +2307,12 @@ int mtk_cam_ctrl_dump_request(struct mtk_cam_device *cam,
 		goto SKIP_SCHEDULE_WORK;
 	}
 
+	if (ctrl->hw_hang_count_down != 0) {
+		mtk_cam_ctrl_put(ctrl);
+		complete(&wd->work_complete);
+		goto SKIP_SCHEDULE_WORK;
+	}
+
 	mtk_cam_watchdog_schedule_job_dump(wd, desc);
 
 	mtk_cam_ctrl_put(ctrl);
@@ -2337,6 +2339,6 @@ int mtk_cam_ctrl_notify_hw_hang(struct mtk_cam_device *cam,
 	 * count frames before doing recovery to avoid various hw timing.
 	 * 'set 2 to enable recovery'
 	 */
-	ctrl->hw_hang_count_down = 0;
+	ctrl->hw_hang_count_down = (disable_recover_flow) ? 0 : 2;
 	return 0;
 }

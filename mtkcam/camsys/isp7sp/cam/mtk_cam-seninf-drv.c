@@ -3838,10 +3838,12 @@ static int runtime_resume(struct device *dev)
 			if (core->pwr_refcnt_for_aov &&
 				!(core->aov_sensor_id < 0) &&
 				!(core->current_sensor_id < 0) &&
-				(core->current_sensor_id != core->aov_sensor_id))
-				seninf_logi(ctx, "aov sensor streaming on scp now, won't disable mux/cammux\n");
-			else {
-				seninf_logi(ctx, "common sensor streaming, disable mux/cammux for initialization\n");
+				(core->current_sensor_id != core->aov_sensor_id)) {
+				seninf_logi(ctx, "aov sensor streaming on scp now, disable mux/cammux instead of aov path\n");
+				g_seninf_ops->_disable_all_mux(ctx);
+				g_seninf_ops->_disable_all_cammux(ctx);
+			} else {
+				seninf_logi(ctx, "common sensor streaming, disable mux/cammux instead of aov path\n");
 				g_seninf_ops->_disable_all_mux(ctx);
 				g_seninf_ops->_disable_all_cammux(ctx);
 			}
@@ -4069,11 +4071,16 @@ int mtk_cam_seninf_get_csi_irq_status(struct v4l2_subdev *sd, struct v4l2_ctrl *
 {
 	struct seninf_ctx *ctx = sd_to_ctx(sd);
 
+#ifdef __XIAOMI_CAMERA__
+	ctrl->val  = (g_seninf_ops->_get_csi_irq_status(sd_to_ctx(sd)));
+	dev_info(ctx->dev,"update mipi status 0x%x\n", ctrl->val);
+#else
 	ctrl->val  = (g_seninf_ops->_get_csi_irq_status(sd_to_ctx(sd)) & 0x7fff)
 							| (ctx->esd_status_flag << 15);
 	ctx->esd_status_flag = 0;
 	dev_info(ctx->dev,"SENINF%d_CSI2_IRQ_STATUS(0x%x)\n", ctx->seninfIdx, ctrl->val);
 
+#endif
 	return 0;
 }
 
@@ -4428,37 +4435,8 @@ int mtk_cam_seninf_aov_runtime_resume(unsigned int sensor_id,
 			return -EINVAL;
 		}
 		/* SCP side to AP */
-		if (core->aov_csi_clk_switch_flag == CSI_CLK_130) {
-			/* set the parent of clk as parent_clk */
-			if (core->clk[ctx->clk_index] && core->clk[ctx->clk_src_index]) {
-				ret = clk_set_parent(
-					core->clk[ctx->clk_index],
-					core->clk[ctx->clk_src_index]);
-				if (ret < 0) {
-					dev_info(ctx->dev,
-						"[%s] clk[%u]:%s set_parent clk_src[%u]:%s(fail),ret(%d)\n",
-						__func__,
-						ctx->clk_index, clk_names[ctx->clk_index],
-						ctx->clk_src_index,
-						clk_names[ctx->clk_src_index],
-						ret);
-					mutex_unlock(&core->mutex);
-					return ret;
-				}
-				dev_info(ctx->dev,
-					"[%s] clk[%u]:%s set_parent clk_src[%u]:%s(correct),ret(%d)\n",
-					__func__,
-					ctx->clk_index, clk_names[ctx->clk_index],
-					ctx->clk_src_index, clk_names[ctx->clk_src_index],
-					ret);
-			} else {
-				dev_info(ctx->dev,
-					"[%s] Please check clk get whether NULL?\n",
-					__func__);
-				mutex_unlock(&core->mutex);
-				return -EINVAL;
-			}
-		}
+		dev_info(ctx->dev, "[%s] set csi_ck in power on.\n", __func__);
+
 		/* set register to switch phya clock source */
 		ret = enable_phya_clk(ctx);
 		if (ret < 0) {
@@ -4470,6 +4448,15 @@ int mtk_cam_seninf_aov_runtime_resume(unsigned int sensor_id,
 		dev_info(ctx->dev, "[%s] phya clock source switch to scp side\n", __func__);
 	}
 #endif
+
+	if (core->refcnt == 1) {
+		seninf_logi(ctx, "aov sensor streaming on kernel now, disable mux/cammux instead of aov path\n");
+		g_seninf_ops->_disable_all_mux(ctx);
+		g_seninf_ops->_disable_all_cammux(ctx);
+	} else if (core->refcnt > 1) {
+		seninf_logi(ctx, "aov sensor streaming on kernel now, do not disable mux/cammux instead of aov path\n");
+	}
+
 	mutex_unlock(&core->mutex);
 
 	switch (aov_seninf_deinit_type) {

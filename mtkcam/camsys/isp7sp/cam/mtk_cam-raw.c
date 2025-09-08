@@ -35,10 +35,6 @@
 //module_param(debug_dump_fbc, int, 0644);
 //MODULE_PARM_DESC(debug_dump_fbc, "debug: dump fbc");
 
-static int enable_reset_log;
-module_param(enable_reset_log, int, 0644);
-MODULE_PARM_DESC(enable_reset_log, "debug: enable reset log");
-
 #define MTK_RAW_STOP_HW_TIMEOUT			(33)
 
 #define KERNEL_LOG_MAX	                400
@@ -677,34 +673,6 @@ void write_pkt_trigger_apu_frame_mode(struct mtk_raw_device *dev,
 	write_pkt_apu_raw(dev, pkt, false /* is_apu_dc */);
 }
 
-#define DBG_SEL_RAWI_R2_SMI_DBG_DATA    0x00000506
-#define DBG_SEL_UFDI_R2_SMI_DBG_DATA    0x00000508
-#define DBG_SEL_RAWI_R5_SMI_DBG_DATA    0x0000050C
-#define DBG_SEL_UFDI_R5_SMI_DBG_DATA    0x0000050E
-#define DBG_SEL_RAWI_R2_SMI_PORT        0x000000A4
-#define DBG_SEL_UFDI_R2_SMI_PORT        0x000000A5
-#define DBG_SEL_RAWI_R5_SMI_PORT        0x000000A8
-#define DBG_SEL_UFDI_R5_SMI_PORT        0x000000A9
-bool is_rawi_ufdi_rdone_zero(struct mtk_raw_device *dev)
-{
-	u32 rawi_r2_dbg, ufdi_r2_dbg, rawi_r5_dbg, ufdi_r5_dbg;
-
-	writel(DBG_SEL_RAWI_R2_SMI_DBG_DATA, dev->base + REG_CAMRAWDMATOP_DMA_DBG_SEL);
-	rawi_r2_dbg = readl(dev->base + REG_CAMRAWDMATOP_DMA_DBG_PORT);
-	writel(DBG_SEL_UFDI_R2_SMI_DBG_DATA, dev->base + REG_CAMRAWDMATOP_DMA_DBG_SEL);
-	ufdi_r2_dbg = readl(dev->base + REG_CAMRAWDMATOP_DMA_DBG_PORT);
-	writel(DBG_SEL_RAWI_R5_SMI_DBG_DATA, dev->base + REG_CAMRAWDMATOP_DMA_DBG_SEL);
-	rawi_r5_dbg = readl(dev->base + REG_CAMRAWDMATOP_DMA_DBG_PORT);
-	writel(DBG_SEL_UFDI_R5_SMI_DBG_DATA, dev->base + REG_CAMRAWDMATOP_DMA_DBG_SEL);
-	ufdi_r5_dbg = readl(dev->base + REG_CAMRAWDMATOP_DMA_DBG_PORT);
-
-	if (rawi_r2_dbg & BIT(19) && ufdi_r2_dbg & BIT(19) &&
-	    rawi_r5_dbg & BIT(19) && ufdi_r5_dbg & BIT(19))
-		return true;
-
-	return false;
-}
-
 #define REG_DMA_SOFT_RST_STAT               0x4068
 #define REG_DMA_SOFT_RST_STAT2              0x406C
 #define REG_DMA_DBG_CHASING_STATUS          0x4098
@@ -772,7 +740,7 @@ bool is_all_dma_idle(struct mtk_raw_device *dev)
 	if (raw_rst_stat == RAW_RST_STAT_CHECK &&
 		raw_rst_stat2 == RAW_RST_STAT2_CHECK &&
 		yuv_rst_stat == YUV_RST_STAT_CHECK)
-		return is_rawi_ufdi_rdone_zero(dev);
+		return true;
 
 	return false;
 }
@@ -782,44 +750,9 @@ void dump_dma_soft_rst_stat(struct mtk_raw_device *dev)
 	int raw_rst_stat = readl(dev->base + REG_DMA_SOFT_RST_STAT);
 	int raw_rst_stat2 = readl(dev->base + REG_DMA_SOFT_RST_STAT2);
 	int yuv_rst_stat = readl(dev->yuv_base + REG_DMA_SOFT_RST_STAT);
-	int rawi_r2_stat, ufdi_r2_stat, rawi_r5_stat, ufdi_r5_stat;
 
-	writel(DBG_SEL_RAWI_R2_SMI_PORT, dev->base + REG_CAMRAWDMATOP_DMA_DBG_SEL);
-	rawi_r2_stat = readl(dev->base + REG_CAMRAWDMATOP_DMA_DBG_PORT);
-
-	writel(DBG_SEL_UFDI_R2_SMI_PORT, dev->base + REG_CAMRAWDMATOP_DMA_DBG_SEL);
-	ufdi_r2_stat = readl(dev->base + REG_CAMRAWDMATOP_DMA_DBG_PORT);
-
-	writel(DBG_SEL_RAWI_R5_SMI_PORT, dev->base + REG_CAMRAWDMATOP_DMA_DBG_SEL);
-	rawi_r5_stat = readl(dev->base + REG_CAMRAWDMATOP_DMA_DBG_PORT);
-
-	writel(DBG_SEL_UFDI_R5_SMI_PORT, dev->base + REG_CAMRAWDMATOP_DMA_DBG_SEL);
-	ufdi_r5_stat = readl(dev->base + REG_CAMRAWDMATOP_DMA_DBG_PORT);
-
-	dev_info(dev->dev, "%s: chasing: 0x%08x 0x%08x, dc_dbg_line_cnt: 0x%08x 0x%08x 0x%08x 0x%08x\n",
-		__func__,
-		readl(dev->base + REG_CAMRAWDMATOP_DC_DBG_CHASING_STATUS),
-		readl(dev->base + REG_CAMRAWDMATOP_DC_DBG_CHASING_STATUS2),
-		readl(dev->base + REG_CAMRAWDMATOP_DC_DBG_LINE_CNT_RAWI_R2),
-		readl(dev->base + REG_CAMRAWDMATOP_DC_DBG_LINE_CNT_UFDI_R2),
-		readl(dev->base + REG_CAMRAWDMATOP_DC_DBG_LINE_CNT_RAWI_R5),
-		readl(dev->base + REG_CAMRAWDMATOP_DC_DBG_LINE_CNT_UFDI_R5));
-
-	dev_info(dev->dev, "%s: rst_stat: 0x%08x 0x%08x 0x%08x, smi_port_line_cnt: 0x%08x 0x%08x 0x%08x 0x%08x\n",
-		__func__,
-		raw_rst_stat, raw_rst_stat2, yuv_rst_stat,
-		rawi_r2_stat, ufdi_r2_stat, rawi_r5_stat, ufdi_r5_stat);
-}
-
-void check_soft_rst_smi_stat(struct mtk_raw_device *dev)
-{
-	struct mtk_yuv_device *yuv_dev = get_yuv_dev(dev);
-
-	if (dev->num_larbs && dev->larbs[0])
-		mtk_smi_status_check(&dev->larbs[0]->dev, enable_reset_log);
-
-	if (yuv_dev->num_larbs && yuv_dev->larbs[0])
-		mtk_smi_status_check(&yuv_dev->larbs[0]->dev, enable_reset_log);
+	dev_info(dev->dev, "%s: rst_stat: 0x%08x 0x%08x 0x%08x\n",
+		 __func__, raw_rst_stat, raw_rst_stat2, yuv_rst_stat);
 }
 
 #define REG_LTM_RESET		0x2350
@@ -860,15 +793,12 @@ void reset(struct mtk_raw_device *dev)
 			 __func__);
 		dump_dma_soft_rst_stat(dev);
 		mtk_smi_dbg_hang_detect("camsys-raw");
-		WRAP_AEE_EXCEPTION(MSG_SW_RESET_ERROR, dev_name(dev->dev));
 		goto RESET_FAILURE;
 	}
 
 	/* do hw rst */
 	writel(FBIT(CAMCTL_HW_RST), dev->base + REG_CAMCTL_SW_CTL);
 	writel(0, dev->base + REG_CAMCTL_SW_CTL);
-	/* check bus status */
-	check_soft_rst_smi_stat(dev);
 
 RESET_FAILURE:
 

@@ -292,8 +292,6 @@ void mtk_imgsys_pipe_job_finish(struct mtk_imgsys_request *req,
 		i = MTK_IMGSYS_VIDEO_NODE_CTRLMETA_OUT;
 
 	in_buf = req->buf_map[i];
-	req_track->mainflow_from = REQUEST_DONE_FROM_KERNEL_TO_IMGSTREAM;
-	req_track->subflow_kernel++;
 
 	for (i = 0; i < pipe->desc->total_queues; i++) {
 		struct mtk_imgsys_dev_buffer *dev_buf = req->buf_map[i];
@@ -327,6 +325,8 @@ done:
 #ifdef REQ_TIMESTAMP
 	req->tstate.time_notify2vb2done = ktime_get_boottime_ns()/1000;
 #endif
+    req_track->mainflow_from = REQUEST_DONE_FROM_KERNEL_TO_IMGSTREAM;
+    req_track->subflow_kernel++;
 	complete(&req->done);
         if (imgsys_dbg_enable()) {
 		dev_dbg(pipe->imgsys_dev->dev,
@@ -734,7 +734,7 @@ void *get_kva(struct mtk_imgsys_dev_buffer *buf, struct iosys_map *imap)
 	dma_buf_begin_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
 	ret = dma_buf_vmap(dmabuf, &map);
 	if (ret) {
-		pr_info("%s, map kernel va failed\n", __func__);
+		pr_info("%s, map kernel va failed(%d)\n", __func__, ret);
 		ret = -ENOMEM;
 		goto ERROR;
 	}
@@ -761,7 +761,7 @@ static void put_kva(struct buf_va_info_t *buf_va_info)
 	struct dma_buf *dmabuf;
 
 	dmabuf = buf_va_info->dma_buf_putkva;
-	if (!IS_ERR(dmabuf)) {
+	if (!IS_ERR_OR_NULL(&buf_va_info->map.vaddr)) {
 		dma_buf_vunmap(dmabuf, &buf_va_info->map);
 		dma_buf_end_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
 		dma_buf_unmap_attachment(buf_va_info->attach, buf_va_info->sgt,
