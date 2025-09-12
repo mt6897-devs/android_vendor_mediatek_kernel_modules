@@ -4,7 +4,9 @@
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
+#ifdef MALACHITE_CAM
 #include <linux/hardware_info.h>
+#endif
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-fwnode.h>
 #include <media/v4l2-subdev.h>
@@ -581,6 +583,7 @@ static int search_sensor(struct adaptor_ctx *ctx)
 				module_name = "none";
 			};
 
+#ifdef MALACHITE_CAM
 			if (sensor_id == MALACHITES5KHP3WIDE_SENSOR_ID) {
 				hardwareinfo_set_prop(HARDWARE_BACK_CAM, ctx->subdrv->name);
 				hardwareinfo_set_prop(HARDWARE_BACK_CAM_MOUDULE_ID, module_name);
@@ -597,6 +600,7 @@ static int search_sensor(struct adaptor_ctx *ctx)
 				hardwareinfo_set_prop(HARDWARE_FRONT_CAM, ctx->subdrv->name);
 				hardwareinfo_set_prop(HARDWARE_FRONT_CAM_MOUDULE_ID, module_name);
 			}
+#endif
 
 		}
 
