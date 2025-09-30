@@ -42,19 +42,6 @@ void check_current_scenario_id_bound(struct subdrv_ctx *ctx)
 	}
 }
 
-void i2c_table_write(struct subdrv_ctx *ctx, u16 *list, u32 len)
-{
-	switch (ctx->s_ctx.i2c_transfer_data_type) {
-	case I2C_DT_ADDR_16_DATA_16:
-		subdrv_i2c_wr_regs_u16(ctx, list, len);
-		break;
-	case I2C_DT_ADDR_16_DATA_8:
-	default:
-		subdrv_i2c_wr_regs_u8(ctx, list, len);
-		break;
-	}
-}
-
 static void dump_i2c_buf(struct subdrv_ctx *ctx)
 {
 	int i, j;
@@ -129,11 +116,45 @@ static void dump_i2c_buf(struct subdrv_ctx *ctx)
 		dump_i2c_buf(ctx); \
 	} \
 } while (0)
+static void mi_i2c_table_write(struct subdrv_ctx *ctx, u16 *list, u32 len)
+{
+	int i = 0;
+	DRV_LOG(ctx, "mi_i2c_table_write + len = %d  \n",len);
+	for ( i = 0; i < len; i=i+2) {
+		subdrv_i2c_wr_u8(ctx, list[i], list[i+1]&0xff);
+	}
+	DRV_LOG(ctx, "mi_i2c_table_write - \n");
+}
+
+void i2c_table_write(struct subdrv_ctx *ctx, u16 *list, u32 len)
+{
+	switch (ctx->s_ctx.i2c_transfer_data_type) {
+	case I2C_DT_ADDR_16_DATA_16:
+		subdrv_i2c_wr_regs_u16(ctx, list, len);
+                break;
+	case I2C_DT_ADDR_16_DATA_8:
+	default:
+#ifdef __XIAOMI_CAMERA__
+		if (ctx->s_ctx.mi_i2c_type){
+			mi_i2c_table_write(ctx, list, len);
+		} else {
+			subdrv_i2c_wr_regs_u8(ctx, list, len);
+		}
+#endif
+		break;
+	}
+}
 
 void commit_i2c_buffer(struct subdrv_ctx *ctx)
 {
 	if (ctx->_size_to_write && !ctx->fast_mode_on) {
-		subdrv_i2c_wr_regs_u8(ctx, ctx->_i2c_data, ctx->_size_to_write);
+#ifdef __XIAOMI_CAMERA__
+		if (ctx->s_ctx.mi_i2c_type){
+			mi_i2c_table_write(ctx, ctx->_i2c_data, ctx->_size_to_write);
+		} else {
+			subdrv_i2c_wr_regs_u8(ctx, ctx->_i2c_data, ctx->_size_to_write);
+		}
+#endif
 		DUMP_I2C_BUF_IF_DEBUG(ctx);
 		memset(ctx->_i2c_data, 0x0, sizeof(ctx->_i2c_data));
 		ctx->_size_to_write = 0;

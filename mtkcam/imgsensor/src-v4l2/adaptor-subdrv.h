@@ -378,6 +378,7 @@ struct subdrv_static_ctx {
 	u8 mi_enable_async;
 	u8 mi_disable_set_dummy;
 	struct setting_workqueue *workqueue;
+	u8 mi_i2c_type;
 #endif
 
 	/* custom stream control delay timing for hw limitation */
