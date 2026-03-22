@@ -980,12 +980,12 @@
  *------------------------------------------------------------------------------
  */
 #ifndef CFG_P2P_SCAN_REPORT_ALL_BSS
-#define CFG_P2P_SCAN_REPORT_ALL_BSS            0
+#define CFG_P2P_SCAN_REPORT_ALL_BSS            1
 #endif
 
 /* Allow connection with no P2P IE device */
 #ifndef CFG_P2P_CONNECT_ALL_BSS
-#define CFG_P2P_CONNECT_ALL_BSS            0
+#define CFG_P2P_CONNECT_ALL_BSS            1
 #endif
 
 /* Allow setting max P2P GO client count */
@@ -1904,7 +1904,7 @@
  * in mtk_cfg80211_get_station
  *------------------------------------------------------------------------------
  */
-#define CFG_REPORT_MAX_TX_RATE	0
+#define CFG_REPORT_MAX_TX_RATE	1
 
 #if (CFG_SUPPORT_STATS_ONE_CMD == 1)
 #define CFG_STATS_ONE_CMD_PERIOD 3000
@@ -2029,7 +2029,7 @@
  * issues, eg. cross band switch.
  *------------------------------------------------------------------------------
  */
-#define CFG_SEND_DEAUTH_DURING_CHNL_SWITCH    1
+#define CFG_SEND_DEAUTH_DURING_CHNL_SWITCH    0
 
 /*------------------------------------------------------------------------------
  *Smart Gear Feature Configure
